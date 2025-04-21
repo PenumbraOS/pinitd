@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "im.agg.pinit"
+    namespace = "im.agg.pinitd"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "im.agg.pinit"
+        applicationId = "im.agg.pinitd"
         minSdk = 32
         targetSdk = 35
         versionCode = 1
@@ -32,6 +32,12 @@ android {
     }
     kotlinOptions {
         jvmTarget = "11"
+    }
+    packaging {
+        jniLibs {
+            // Required for binary to be accessible
+            useLegacyPackaging = true
+        }
     }
 }
 

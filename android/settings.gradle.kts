@@ -19,6 +19,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "pinit"
+rootProject.name = "pinitd"
 include(":app")
  

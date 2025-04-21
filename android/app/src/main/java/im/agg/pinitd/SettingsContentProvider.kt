@@ -1,4 +1,4 @@
-package im.agg.pinit
+package im.agg.pinitd
 
 import android.content.ContentProvider
 import android.content.ContentValues
@@ -9,10 +9,10 @@ import android.database.MatrixCursor
 import android.net.Uri
 import android.util.Log
 
-// adb shell content update --uri content://im.agg.trampoline/settings/your_setting_key --bind value:s:your_new_value
+// adb shell content update --uri content://im.agg.pinitd/settings/your_setting_key --bind value:s:your_new_value
 class SettingsContentProvider : ContentProvider() {
     companion object {
-        const val AUTHORITY = "im.agg.trampoline"
+        const val AUTHORITY = "im.agg.pinitd"
         const val PATH_SETTINGS = "settings"
 
         private const val TAG = "SettingsProvider"

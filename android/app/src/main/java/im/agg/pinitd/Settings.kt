@@ -1,4 +1,4 @@
-package im.agg.pinit
+package im.agg.pinitd
 
 import android.content.Context
 import android.content.SharedPreferences

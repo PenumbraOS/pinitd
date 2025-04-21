@@ -2,6 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
     <application
         tools:targetApi="31">
         <receiver
@@ -14,9 +16,13 @@
         </receiver>
         <provider
             android:name=".SettingsContentProvider"
-            android:authorities="im.agg.pinit"
+            android:authorities="im.agg.pinitd"
             android:exported="true"
             android:enabled="true"
+            />
+        <activity
+            android:name=".DummyActivity"
+            android:exported="true"
             />
     </application>
 
