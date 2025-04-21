@@ -1,0 +1,14 @@
+[package]
+name = "pinitd"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+android_31317_exploit = { git = "https://github.com/agg23/android_31317_exploit_rs.git" }
+
+android_logger = "0.15.0"
+log = "0.4"
+thiserror = "2.0"
+bincode = "2.0"
+
+clap = { version = "4.5", features = ["derive"] }
