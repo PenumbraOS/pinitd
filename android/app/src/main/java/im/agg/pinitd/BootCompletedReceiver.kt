@@ -14,8 +14,8 @@ class BootCompletedReceiver : BroadcastReceiver() {
 //            if (command != null) {
 //                Log.w("pinid-trampoline", "Executing command: $command")
 //            }
-            Log.w("pinitd-trampoline", "Launching")
-            launch(context)
+            Log.w("pinitd-trampoline", "Launching (Disabled)")
+//            launch(context)
         }
     }
 }

