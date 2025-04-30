@@ -17,7 +17,7 @@ fun launch(context: Context) {
     val binaryPath = basePath + "lib/arm64/libpinitd.so"
     Log.w(TAG, "Attempting to launch: $binaryPath")
     try {
-        val process = Runtime.getRuntime().exec(arrayOf(binaryPath, "build-payload", binaryPath))
+        val process = Runtime.getRuntime().exec(arrayOf(binaryPath, "build-payload"))
 
         val reader = BufferedReader(InputStreamReader(process.inputStream))
         var payload = reader.readText()
