@@ -1,4 +1,4 @@
-use std::io;
+use std::{io, num::ParseIntError};
 
 use bincode::error::{DecodeError, EncodeError};
 use thiserror::Error;
@@ -11,6 +11,10 @@ pub enum Error {
     Encode(#[from] EncodeError),
     #[error("Bincode decode error {0}")]
     Decode(#[from] DecodeError),
+    #[error("Fd parse error {0}")]
+    ParseIntError(#[from] ParseIntError),
+    #[error("Arg parse error {0}")]
+    ArgError(#[from] clap::Error),
     #[error("Unknown error {0}")]
     Unknown(String),
 }

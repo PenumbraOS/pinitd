@@ -13,12 +13,14 @@ impl Controller {
             Err(error) => match error.kind() {
                 ErrorKind::ConnectionRefused => {
                     // Worker isn't alive, attempt to start
-                    warn!("Worker doesn't appear to be alive. Attempting to start");
+                    warn!("Worker doesn't appear to be alive. Waiting 2s");
+                    sleep(Duration::from_secs(2));
+                    warn!("Attempting to start worker");
                     match start_worker(executable) {
                         Ok(_) => {
                             // Started. Wait short period and attempt to connect
                             warn!("Worker started");
-                            sleep(Duration::from_millis(200));
+                            sleep(Duration::from_millis(1000));
                             connect_worker()
                         }
                         Err(error) => {
