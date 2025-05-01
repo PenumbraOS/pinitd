@@ -9,12 +9,16 @@ pub enum Error {
     IO(#[from] io::Error),
     #[error("Bincode encode error {0}")]
     Encode(#[from] EncodeError),
-    #[error("Bincode decode error {0}")]
-    Decode(#[from] DecodeError),
+    // #[error("Bincode decode error {0}")]
+    // Decode(#[from] DecodeError),
     #[error("Fd parse error {0}")]
     ParseIntError(#[from] ParseIntError),
     #[error("Arg parse error {0}")]
     ArgError(#[from] clap::Error),
+    #[error("Failed to parse config: {0}")]
+    ConfigError(String),
+    #[error("Failed to parse state: {0}")]
+    ParseStateError(#[from] serde_json::Error),
     #[error("Unknown error {0}")]
     Unknown(String),
 }

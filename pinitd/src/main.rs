@@ -14,8 +14,11 @@ use zygote::extract_and_write_fd;
 
 mod controller;
 mod error;
-mod protocol;
+mod process;
 mod socket;
+mod state;
+mod types;
+mod unit;
 mod zygote;
 
 /// Custom init system for Ai Pin
