@@ -1,122 +1,165 @@
-use std::{
-    collections::HashMap, io::ErrorKind, path::PathBuf, sync::Arc, thread::sleep, time::Duration,
-};
+use std::process;
 
-use android_31317_exploit::exploit::{ExploitKind, TriggerApp, build_and_execute};
-use pinitd_common::{CONFIG_DIR, ServiceRunState};
-use tokio::{fs, sync::Mutex};
+use pinitd_common::protocol::{RemoteCommand, RemoteResponse};
+use tokio::{
+    io::AsyncReadExt,
+    net::UnixStream,
+    signal::unix::{SignalKind, signal},
+    task::JoinHandle,
+};
 
 use crate::{
     error::Error,
-    process::spawn_and_monitor_service,
-    socket::connect_worker,
-    state::State,
-    types::{Service, ServiceRegistry},
-    unit::ServiceConfig,
+    registry::ServiceRegistry,
+    socket::{close_socket, register_socket},
 };
 
-pub struct Controller {}
+#[derive(Clone)]
+pub struct Controller {
+    registry: ServiceRegistry,
+}
 
 impl Controller {
     pub async fn create() -> Result<(), Error> {
-        let registry = Arc::new(Mutex::new(HashMap::new()));
+        let registry = ServiceRegistry::load().await?;
+        registry.autostart_all().await?;
 
-        load_configs_and_state(registry.clone()).await?;
+        let controller = Controller { registry };
 
-        // let mut worker_socket = match connect_worker() {
-        //     Ok(socket) => Ok(socket),
-        //     Err(error) => match error.kind() {
-        //         ErrorKind::ConnectionRefused => {
-        //             // Worker isn't alive, attempt to start
-        //             warn!("Worker doesn't appear to be alive. Waiting 2s");
-        //             sleep(Duration::from_secs(2));
-        //             warn!("Attempting to start worker");
-        //         }
-        //         _ => Err(error),
-        //     },
-        // }?;
+        let mut should_shutdown = setup_signal_watchers()?;
 
-        // worker_socket.set_read_timeout(None)?;
+        let control_socket = register_socket().await?;
 
-        // DataFrame::new("Hello world".into()).send(&mut worker_socket)?;
+        info!("Controller started");
+        let mut did_signal = false;
 
-        // worker_socket.shutdown(std::net::Shutdown::Both)?;
-        warn!("Controller started");
-
-        Ok(())
-    }
-}
-
-async fn load_configs_and_state(registry: ServiceRegistry) -> Result<(), Error> {
-    info!("Loading service configurations from {}", CONFIG_DIR);
-    let _ = fs::create_dir_all(CONFIG_DIR).await;
-
-    let state = State::load().await?;
-    info!("Loaded enabled state for: {:?}", state.enabled_services);
-
-    let mut directory = fs::read_dir(CONFIG_DIR).await?;
-
-    let mut services = HashMap::new();
-
-    while let Some(entry) = directory.next_entry().await? {
-        let path = entry.path();
-        if path.is_file() && path.extension().map_or(false, |ext| ext == "unit") {
-            match ServiceConfig::parse(&path).await {
-                Ok(config) => {
-                    let name = config.name.clone();
-                    let enabled = state.enabled_services.contains(&name);
-                    info!("Loaded config: {} (Enabled: {})", name, enabled);
-
-                    let runtime = Service {
-                        config,
-                        state: ServiceRunState::Stopped,
-                        enabled,
-                        monitor_task: None,
-                    };
-                    services.insert(name, runtime);
+        loop {
+            tokio::select! {
+                result = control_socket.accept() => {
+                    match result {
+                        Ok((stream, _addr)) => {
+                            info!("Accepted new client connection");
+                            let controller_clone = controller.clone();
+                            tokio::spawn(async move {
+                                match controller_clone.handle_command(stream).await {
+                                    // TODO: Handle sending response
+                                    Ok(_) => todo!(),
+                                    Err(err) => error!("Error handling client: {err:?}"),
+                                }
+                            });
+                        }
+                        Err(e) => {
+                            error!("Error accepting control connection: {}", e);
+                        }
+                    }
                 }
-                Err(e) => {
-                    warn!("Failed to parse unit file {:?}: {}", path, e);
+                _ = &mut should_shutdown => {
+                    info!("Signal shutdown received");
+                    did_signal = true;
+                    break;
                 }
             }
         }
+
+        shutdown(controller.registry, did_signal).await?;
+
+        Ok(())
     }
 
-    // TODO: Look at this
-    let mut reg = registry.lock().await;
-    *reg = services;
-    info!(
-        "Finished loading configurations. {} services loaded.",
-        reg.len()
-    );
-    Ok(())
+    async fn handle_command(&self, mut stream: UnixStream) -> Result<RemoteResponse, Error> {
+        let mut buffer = Vec::new();
+        stream.read_to_end(&mut buffer).await?;
+
+        let (command, _): (RemoteCommand, usize) =
+            bincode::serde::decode_from_slice(&buffer, bincode::config::standard())?;
+        info!("Received RemoteCommand: {:?}", command);
+
+        let response = process_remote_command(command, self.registry.clone()).await;
+
+        Ok(response)
+    }
 }
 
-async fn autostart(registry: ServiceRegistry) {
-    let registry_lock = registry.lock().await;
+fn setup_signal_watchers() -> Result<JoinHandle<()>, Error> {
+    let mut sigterm = signal(SignalKind::terminate())?;
+    let mut sigint = signal(SignalKind::interrupt())?;
 
-    // Build current list of registry in case it's mutated during iteration and to drop lock
-    let service_names = registry_lock.keys().cloned().collect::<Vec<String>>();
-
-    for name in service_names {
-        // Each iteration of the loop reacquires a lock
-        let registry_lock = registry.lock().await;
-
-        let should_start = {
-            let service = registry_lock.get(&name).unwrap();
-            service.enabled && service.config.autostart && service.state == ServiceRunState::Stopped
-        };
-
-        if !should_start {
-            continue;
+    let shutdown_signal_task = tokio::spawn(async move {
+        tokio::select! {
+            _ = sigterm.recv() => {
+                info!("Received SIGTERM, initiating shutdown...");
+            },
+            _ = sigint.recv() => {
+                 info!("Received SIGINT (Ctrl+C), initiating shutdown...");
+            },
         }
+    });
 
-        info!("Autostarting service: {}", name);
-        // Drop lock in case it's required by spawn
-        drop(registry_lock);
-        // Pass the Arc, spawn_and_monitor will lock when needed
-        let _ = spawn_and_monitor_service(name.clone(), registry.clone()).await;
+    Ok(shutdown_signal_task)
+}
+
+async fn process_remote_command(
+    command: RemoteCommand,
+    registry: ServiceRegistry,
+) -> RemoteResponse {
+    match command {
+        RemoteCommand::Start(name) => {
+            match registry.spawn_and_monitor_service(name.clone()).await {
+                Ok(_) => RemoteResponse::Success(format!(
+                    "Service \"{name}\" started or already running.",
+                )),
+                Err(err) => {
+                    RemoteResponse::Error(format!("Failed to start service \"{name}\": {err}"))
+                }
+            }
+        }
+        RemoteCommand::Stop(name) => match registry.service_stop(name.clone()).await {
+            Ok(_) => RemoteResponse::Success(format!("Service \"{name}\" stop initiated.")),
+            Err(err) => RemoteResponse::Error(format!("Failed to stop service \"{name}\": {err}")),
+        },
+        RemoteCommand::Enable(name) => match registry.service_enable(name.clone()).await {
+            Ok(_) => RemoteResponse::Success(format!("Service \"{name}\" enabled")),
+            Err(err) => {
+                RemoteResponse::Error(format!("Failed to enable service \"{name}\": {err}"))
+            }
+        },
+        RemoteCommand::Disable(name) => match registry.service_disable(name.clone()).await {
+            Ok(_) => RemoteResponse::Success(format!("Service \"{name}\" disabled")),
+            Err(err) => {
+                RemoteResponse::Error(format!("Failed to disable service \"{name}\": {err}"))
+            }
+        },
+        RemoteCommand::Status(name) => match registry
+            .with_service(&name, |service| Ok(service.status()))
+            .await
+        {
+            Ok(status) => RemoteResponse::Status(status),
+            Err(err) => RemoteResponse::Error(err.to_string()),
+        },
+        RemoteCommand::List => match registry.service_list_all().await {
+            Ok(list) => RemoteResponse::List(list),
+            Err(err) => RemoteResponse::Error(format!("Failed to retrieve service list: {err}")),
+        },
+        RemoteCommand::Shutdown => {
+            info!("Shutdown RemoteCommand received.");
+            // Don't await shutdown here, just trigger it and respond
+            tokio::spawn(shutdown(registry, false));
+            RemoteResponse::ShuttingDown // Respond immediately
+        }
+    }
+}
+
+async fn shutdown(registry: ServiceRegistry, triggered_by_signal: bool) -> Result<(), Error> {
+    info!("Initiating daemon shutdown...");
+    registry.shutdown().await?;
+
+    close_socket().await;
+
+    info!("Goodbye");
+
+    if triggered_by_signal {
+        process::exit(0);
     }
 
-    info!("Autostart sequence complete.");
+    Ok(())
 }

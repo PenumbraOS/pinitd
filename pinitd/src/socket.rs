@@ -1,27 +1,28 @@
-use std::io;
-use std::os::android::net::SocketAddrExt;
-use std::os::unix::net::{SocketAddr, UnixListener, UnixStream};
+use std::io::ErrorKind;
 
-const WORKER_SOCKET_NAME: &str = "\0pinit-worker";
+use pinitd_common::SOCKET_PATH;
+use tokio::fs;
+use tokio::net::UnixListener;
 
-pub fn connect_worker() -> Result<UnixStream, io::Error> {
-    warn!("Attempting to connect to worker");
-    let address = address()?;
-    UnixStream::connect_addr(&address)
+use crate::error::Error;
+
+pub async fn register_socket() -> Result<UnixListener, Error> {
+    if fs::metadata(SOCKET_PATH).await.is_ok() {
+        info!("Removing existing socket file: {}", SOCKET_PATH);
+        fs::remove_file(SOCKET_PATH).await?;
+    }
+
+    let listener = UnixListener::bind(SOCKET_PATH)?;
+    info!("Listening for commands on {}", SOCKET_PATH);
+
+    Ok(listener)
 }
 
-pub fn open_socket() -> Result<UnixListener, io::Error> {
-    warn!("Attempting to open socket");
-    let address = address()?;
-    UnixListener::bind_addr(&address)
-}
-
-fn address() -> Result<SocketAddr, io::Error> {
-    match SocketAddr::from_abstract_name(WORKER_SOCKET_NAME) {
-        Ok(address) => Ok(address),
-        Err(_) => Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "Invalid socket name",
-        )),
+pub async fn close_socket() {
+    info!("Cleaning up socket file: {}", SOCKET_PATH);
+    if let Err(e) = fs::remove_file(SOCKET_PATH).await {
+        if e.kind() != ErrorKind::NotFound {
+            error!("Failed to remove socket file during shutdown: {}", e);
+        }
     }
 }

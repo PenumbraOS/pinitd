@@ -1,6 +1,5 @@
 use pinitd_common::{ServiceRunState, ServiceStatus};
-use std::{collections::HashMap, sync::Arc};
-use tokio::{sync::Mutex, task::JoinHandle};
+use tokio::task::JoinHandle;
 
 use crate::unit::ServiceConfig;
 
@@ -22,5 +21,3 @@ impl Service {
         }
     }
 }
-
-pub type ServiceRegistry = Arc<Mutex<HashMap<String, Service>>>;

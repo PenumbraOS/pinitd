@@ -14,7 +14,7 @@ use zygote::extract_and_write_fd;
 
 mod controller;
 mod error;
-mod process;
+mod registry;
 mod socket;
 mod state;
 mod types;
@@ -37,9 +37,10 @@ struct NoAdditionalArgs {
     _remaining_args: Vec<String>,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     // Purposefully don't initialize logging until we need it, so we can specialize it for the process in question
-    match run() {
+    match run().await {
         Err(e) => {
             init_logging_with_tag(None);
             error!("{e}")
@@ -48,7 +49,7 @@ fn main() {
     }
 }
 
-fn run() -> Result<(), Error> {
+async fn run() -> Result<(), Error> {
     log_panics::init();
 
     if let Err(error) = extract_and_write_fd() {
@@ -61,7 +62,7 @@ fn run() -> Result<(), Error> {
             init_logging_with_tag(Some("pinitd-controller".into()));
             warn!("Starting controller");
             // This uses the priviledged binary, not our binary
-            Ok(Controller::create()?)
+            Ok(Controller::create().await?)
         }
         Args::BuildPayload(_) => {
             init_logging_with_tag(None);

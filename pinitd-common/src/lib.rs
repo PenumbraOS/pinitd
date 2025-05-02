@@ -1,30 +1,16 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-// --- Constants ---
-// Note: These paths assume execution as root or appropriate permissions.
-// Adjust if running in a different context.
+pub mod protocol;
+
 pub const SOCKET_PATH: &str = "/data/local/tmp/jailbreak/pinitd/initd.sock";
 pub const CONFIG_DIR: &str = "/data/local/jailbreak_units";
 pub const STATE_FILE: &str = "/data/local/tmp/initd.state";
 
-// --- IPC Command/Response ---
-
-#[derive(Serialize, Deserialize, Debug)]
-pub enum Command {
-    Start(String),
-    Stop(String),
-    Enable(String),
-    Disable(String),
-    Status(String),
-    List,
-    Shutdown,
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum ServiceRunState {
     Stopped,
-    Running { pid: u32 },
+    Running { pid: i32 },
     Failed { reason: String },
 }
 
@@ -44,13 +30,4 @@ pub struct ServiceStatus {
     pub enabled: bool,
     pub state: ServiceRunState,
     pub config_path: PathBuf,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub enum Response {
-    Success(String),
-    Error(String),
-    Status(ServiceStatus),
-    List(Vec<ServiceStatus>),
-    ShuttingDown,
 }
