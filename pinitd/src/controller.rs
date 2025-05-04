@@ -10,6 +10,7 @@ use tokio::{
     signal::unix::{SignalKind, signal},
     task::JoinHandle,
 };
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     error::Error,
@@ -31,12 +32,12 @@ impl Controller {
 
         let controller = Controller { registry };
 
-        let mut should_shutdown = setup_signal_watchers()?;
+        let shutdown_token = CancellationToken::new();
+        let mut should_shutdown = setup_signal_watchers(shutdown_token.clone())?;
 
         let control_socket = register_socket().await?;
 
         info!("Controller started");
-        let mut did_signal = false;
 
         loop {
             tokio::select! {
@@ -45,8 +46,9 @@ impl Controller {
                         Ok((mut stream, _)) => {
                             info!("Accepted new client connection");
                             let controller_clone = controller.clone();
+                            let shutdown_token_clone = shutdown_token.clone();
                             tokio::spawn(async move {
-                                match controller_clone.handle_command(&mut stream).await {
+                                match controller_clone.handle_command(&mut stream, shutdown_token_clone).await {
                                     Ok(response) => {
                                         match response.encode() {
                                             Ok(data) => {
@@ -67,31 +69,36 @@ impl Controller {
                 }
                 _ = &mut should_shutdown => {
                     info!("Signal shutdown received");
-                    did_signal = true;
                     break;
                 }
             }
         }
 
-        shutdown(controller.registry, did_signal).await?;
+        shutdown(controller.registry).await?;
+
+        info!("After shutdown");
 
         Ok(())
     }
 
-    async fn handle_command(&self, stream: &mut UnixStream) -> Result<RemoteResponse, Error> {
+    async fn handle_command(
+        &self,
+        stream: &mut UnixStream,
+        shutdown_token: CancellationToken,
+    ) -> Result<RemoteResponse, Error> {
         let mut buffer = Vec::new();
         stream.read_to_end(&mut buffer).await?;
 
         let (command, _) = RemoteCommand::decode(&buffer)?;
         info!("Received RemoteCommand: {:?}", command);
 
-        let response = process_remote_command(command, self.registry.clone()).await;
+        let response = process_remote_command(command, self.registry.clone(), shutdown_token).await;
 
         Ok(response)
     }
 }
 
-fn setup_signal_watchers() -> Result<JoinHandle<()>, Error> {
+fn setup_signal_watchers(shutdown_token: CancellationToken) -> Result<JoinHandle<()>, Error> {
     let mut sigterm = signal(SignalKind::terminate())?;
     let mut sigint = signal(SignalKind::interrupt())?;
 
@@ -103,6 +110,9 @@ fn setup_signal_watchers() -> Result<JoinHandle<()>, Error> {
             _ = sigint.recv() => {
                  info!("Received SIGINT (Ctrl+C), initiating shutdown...");
             },
+            _ = shutdown_token.cancelled() => {
+                info!("Received shutdown command, initiating shutdown...");
+            }
         }
     });
 
@@ -112,13 +122,18 @@ fn setup_signal_watchers() -> Result<JoinHandle<()>, Error> {
 async fn process_remote_command(
     command: RemoteCommand,
     registry: ServiceRegistry,
+    shutdown_token: CancellationToken,
 ) -> RemoteResponse {
     match command {
         RemoteCommand::Start(name) => {
             match registry.spawn_and_monitor_service(name.clone()).await {
-                Ok(_) => RemoteResponse::Success(format!(
-                    "Service \"{name}\" started or already running.",
-                )),
+                Ok(did_start) => {
+                    if did_start {
+                        RemoteResponse::Success(format!("Service \"{name}\" started",))
+                    } else {
+                        RemoteResponse::Success(format!("Service \"{name}\" already running",))
+                    }
+                }
                 Err(err) => {
                     RemoteResponse::Error(format!("Failed to start service \"{name}\": {err}"))
                 }
@@ -153,14 +168,13 @@ async fn process_remote_command(
         },
         RemoteCommand::Shutdown => {
             info!("Shutdown RemoteCommand received.");
-            // Don't await shutdown here, just trigger it and respond
-            tokio::spawn(shutdown(registry, false));
+            shutdown_token.cancel();
             RemoteResponse::ShuttingDown // Respond immediately
         }
     }
 }
 
-async fn shutdown(registry: ServiceRegistry, triggered_by_signal: bool) -> Result<(), Error> {
+async fn shutdown(registry: ServiceRegistry) -> Result<(), Error> {
     info!("Initiating daemon shutdown...");
     registry.shutdown().await?;
 
@@ -168,9 +182,5 @@ async fn shutdown(registry: ServiceRegistry, triggered_by_signal: bool) -> Resul
 
     info!("Goodbye");
 
-    if triggered_by_signal {
-        process::exit(0);
-    }
-
-    Ok(())
+    process::exit(0);
 }
