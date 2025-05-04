@@ -1,3 +1,5 @@
+use std::process;
+
 use crate::error::Error;
 use clap::Parser;
 use pinitd_common::{
@@ -12,7 +14,7 @@ use tokio::{
 mod error;
 
 #[derive(Parser, Debug)]
-#[command(author, version, about = "Control utility for the initd daemon", long_about = None)]
+#[command(author, version, about = "Control utility for the pinitd daemon", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -56,8 +58,10 @@ async fn main() -> Result<(), Error> {
         Commands::Shutdown => RemoteCommand::Shutdown,
     };
 
-    // --- Connect to Daemon ---
-    let mut stream = UnixStream::connect(SOCKET_PATH).await?;
+    let mut stream = match UnixStream::connect(SOCKET_PATH).await {
+        Ok(stream) => stream,
+        Err(_) => exit_with_message("Cannot find pinitd. Is it running?"),
+    };
 
     let command_bytes = initd_command.encode()?;
     stream.write_all(&command_bytes).await?;
@@ -68,22 +72,18 @@ async fn main() -> Result<(), Error> {
     stream.read_to_end(&mut response_buffer).await?;
 
     if response_buffer.is_empty() {
-        return Err(Error::Unknown(
-            "Daemon closed connection without sending a response".to_string(),
-        ));
+        exit_with_message("pinitd closed connection without sending a response")
     }
 
     let (response, _) = RemoteResponse::decode(&response_buffer)?;
 
-    // --- Process Response ---
     match response {
         RemoteResponse::Success(msg) => {
             println!("{}", msg);
             Ok(())
         }
         RemoteResponse::Error(msg) => {
-            eprintln!("Error: {}", msg);
-            Err(Error::Unknown("Daemon reported error".to_string()))
+            exit_with_message(&format!("Error: {msg}"));
         }
         RemoteResponse::Status(info) => {
             print_status(&[info]);
@@ -91,14 +91,14 @@ async fn main() -> Result<(), Error> {
         }
         RemoteResponse::List(list) => {
             if list.is_empty() {
-                println!("No services configured.");
+                println!("No services configured");
             } else {
                 print_status(&list);
             }
             Ok(())
         }
         RemoteResponse::ShuttingDown => {
-            println!("Daemon shutdown initiated.");
+            println!("Shutting down");
             Ok(())
         }
     }
@@ -119,4 +119,9 @@ fn print_status(statuses: &[ServiceStatus]) {
             info.config_path
         );
     }
+}
+
+fn exit_with_message(message: &str) -> ! {
+    eprintln!("{message}");
+    process::exit(1);
 }
