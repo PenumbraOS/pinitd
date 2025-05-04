@@ -1,4 +1,6 @@
-use std::{collections::HashMap, future::ready, process::Stdio, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap, future::ready, path::Path, process::Stdio, sync::Arc, time::Duration,
+};
 
 use nix::libc::{SIGTERM, kill};
 use pinitd_common::{CONFIG_DIR, ServiceRunState, ServiceStatus};
@@ -27,12 +29,10 @@ pub struct ServiceRegistry(Arc<Mutex<InnerServiceRegistry>>);
 
 impl ServiceRegistry {
     pub async fn load() -> Result<Self, Error> {
-        info!("Loading service configurations from {}", CONFIG_DIR);
-        let _ = fs::create_dir_all(CONFIG_DIR).await;
-
         let state = StoredState::load().await?;
         info!("Loaded enabled state for: {:?}", state.enabled_services);
 
+        info!("Loading service configurations from {}", CONFIG_DIR);
         let mut directory = fs::read_dir(CONFIG_DIR).await?;
 
         let mut registry = HashMap::new();
@@ -40,6 +40,7 @@ impl ServiceRegistry {
         while let Some(entry) = directory.next_entry().await? {
             let path = entry.path();
             if path.is_file() && path.extension().map_or(false, |ext| ext == "unit") {
+                info!("Found config {}", path.display());
                 match ServiceConfig::parse(&path).await {
                     Ok(config) => {
                         let name = config.name.clone();
@@ -261,8 +262,9 @@ impl ServiceRegistry {
     }
 
     async fn perform_command(&self, name: String) -> Result<(i32, String), Error> {
-        let registry_lock = &mut self.0.lock().await.registry;
+        let mut registry_lock = self.0.lock().await;
         let service = registry_lock
+            .registry
             .get_mut(&name)
             .ok_or_else(|| Error::Unknown(format!("Service \"{name}\" not found in registry")))?;
 
@@ -292,7 +294,6 @@ impl ServiceRegistry {
                 service.state = ServiceRunState::Running { pid };
 
                 // Drop contended resources before awaiting process
-                drop(service);
                 drop(registry_lock);
 
                 info!("Monitoring task started for service \"{name}\"");

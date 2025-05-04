@@ -5,11 +5,14 @@ extern crate android_logger;
 use std::path::PathBuf;
 
 use android_31317_exploit::exploit::{ExploitKind, payload};
+#[cfg(target_os = "android")]
 use android_logger::Config;
 use clap::Parser;
 use controller::Controller;
 use error::Error;
 use log::LevelFilter;
+#[cfg(not(target_os = "android"))]
+use simple_logger::SimpleLogger;
 use zygote::extract_and_write_fd;
 
 mod controller;
@@ -52,6 +55,7 @@ async fn main() {
 async fn run() -> Result<(), Error> {
     log_panics::init();
 
+    #[cfg(target_os = "android")]
     if let Err(error) = extract_and_write_fd() {
         error!("fd error: {error}");
     }
@@ -75,6 +79,7 @@ async fn run() -> Result<(), Error> {
     }
 }
 
+#[cfg(target_os = "android")]
 fn init_logging_with_tag(tag: Option<String>) {
     let config = Config::default();
 
@@ -85,6 +90,11 @@ fn init_logging_with_tag(tag: Option<String>) {
     };
 
     android_logger::init_once(config.with_max_level(LevelFilter::Trace));
+}
+
+#[cfg(not(target_os = "android"))]
+fn init_logging_with_tag(_tag: Option<String>) {
+    let _ = SimpleLogger::new().init();
 }
 
 fn init_payload(executable: PathBuf) -> Result<String, Error> {

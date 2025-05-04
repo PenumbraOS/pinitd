@@ -1,11 +1,25 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{
+    fs::create_dir_all,
+    path::{Path, PathBuf},
+};
 
 pub mod protocol;
 
+#[cfg(target_os = "android")]
 pub const SOCKET_PATH: &str = "/data/local/tmp/jailbreak/pinitd/initd.sock";
-pub const CONFIG_DIR: &str = "/data/local/jailbreak_units";
-pub const STATE_FILE: &str = "/data/local/tmp/initd.state";
+#[cfg(not(target_os = "android"))]
+pub const SOCKET_PATH: &str = "test_data/pinitd/initd.sock";
+
+#[cfg(target_os = "android")]
+pub const CONFIG_DIR: &str = "/data/local/jailbreak_units/";
+#[cfg(not(target_os = "android"))]
+pub const CONFIG_DIR: &str = "test_data/jailbreak_units/";
+
+#[cfg(target_os = "android")]
+pub const STATE_FILE: &str = "/data/local/tmp/pinitd/initd.state";
+#[cfg(not(target_os = "android"))]
+pub const STATE_FILE: &str = "test_data/pinitd/initd.state";
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum ServiceRunState {
@@ -30,4 +44,18 @@ pub struct ServiceStatus {
     pub enabled: bool,
     pub state: ServiceRunState,
     pub config_path: PathBuf,
+}
+
+pub fn create_core_directories() {
+    if let Some(parent) = Path::new(SOCKET_PATH).parent() {
+        let _ = create_dir_all(parent);
+    }
+
+    if let Some(parent) = Path::new(CONFIG_DIR).parent() {
+        let _ = create_dir_all(parent);
+    }
+
+    if let Some(parent) = Path::new(STATE_FILE).parent() {
+        let _ = create_dir_all(parent);
+    }
 }

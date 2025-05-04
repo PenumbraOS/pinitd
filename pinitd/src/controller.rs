@@ -1,8 +1,11 @@
 use std::process;
 
-use pinitd_common::protocol::{RemoteCommand, RemoteResponse};
+use pinitd_common::{
+    create_core_directories,
+    protocol::{RemoteCommand, RemoteResponse},
+};
 use tokio::{
-    io::AsyncReadExt,
+    io::{AsyncReadExt, AsyncWriteExt},
     net::UnixStream,
     signal::unix::{SignalKind, signal},
     task::JoinHandle,
@@ -21,6 +24,8 @@ pub struct Controller {
 
 impl Controller {
     pub async fn create() -> Result<(), Error> {
+        create_core_directories();
+
         let registry = ServiceRegistry::load().await?;
         registry.autostart_all().await?;
 
@@ -37,13 +42,20 @@ impl Controller {
             tokio::select! {
                 result = control_socket.accept() => {
                     match result {
-                        Ok((stream, _addr)) => {
+                        Ok((mut stream, _)) => {
                             info!("Accepted new client connection");
                             let controller_clone = controller.clone();
                             tokio::spawn(async move {
-                                match controller_clone.handle_command(stream).await {
-                                    // TODO: Handle sending response
-                                    Ok(_) => todo!(),
+                                match controller_clone.handle_command(&mut stream).await {
+                                    Ok(response) => {
+                                        match response.encode() {
+                                            Ok(data) => {
+                                                let _ = stream.write_all(&data).await;
+                                                let _ = stream.shutdown().await;
+                                            },
+                                            Err(err) => error!("Error responding to client: {err:?}"),
+                                        }
+                                    },
                                     Err(err) => error!("Error handling client: {err:?}"),
                                 }
                             });
@@ -66,12 +78,11 @@ impl Controller {
         Ok(())
     }
 
-    async fn handle_command(&self, mut stream: UnixStream) -> Result<RemoteResponse, Error> {
+    async fn handle_command(&self, stream: &mut UnixStream) -> Result<RemoteResponse, Error> {
         let mut buffer = Vec::new();
         stream.read_to_end(&mut buffer).await?;
 
-        let (command, _): (RemoteCommand, usize) =
-            bincode::serde::decode_from_slice(&buffer, bincode::config::standard())?;
+        let (command, _) = RemoteCommand::decode(&buffer)?;
         info!("Received RemoteCommand: {:?}", command);
 
         let response = process_remote_command(command, self.registry.clone()).await;

@@ -479,6 +479,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shlex",
+ "simple_logger",
  "thiserror",
  "tokio",
 ]
@@ -486,6 +487,13 @@ dependencies = [
 [[package]]
 name = "pinitd-cli"
 version = "0.1.0"
+dependencies = [
+ "bincode",
+ "clap",
+ "pinitd-common",
+ "thiserror",
+ "tokio",
+]
 
 [[package]]
 name = "pinitd-common"

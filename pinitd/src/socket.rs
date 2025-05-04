@@ -7,6 +7,7 @@ use tokio::net::UnixListener;
 use crate::error::Error;
 
 pub async fn register_socket() -> Result<UnixListener, Error> {
+    info!("Registering socket");
     if fs::metadata(SOCKET_PATH).await.is_ok() {
         info!("Removing existing socket file: {}", SOCKET_PATH);
         fs::remove_file(SOCKET_PATH).await?;
