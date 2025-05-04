@@ -105,7 +105,7 @@ impl ServiceRegistry {
         Ok(result)
     }
 
-    pub async fn spawn_and_monitor_service(&self, name: String) -> Result<(), Error> {
+    pub async fn spawn_and_monitor_service(&self, name: String) -> Result<bool, Error> {
         let allow_start = self
             .with_service(&name, |service| {
                 if !service.enabled {
@@ -119,7 +119,7 @@ impl ServiceRegistry {
 
         if allow_start {
             // Already running
-            return Ok(());
+            return Ok(false);
         }
 
         let handle = self.spawn(name.clone());
@@ -128,7 +128,7 @@ impl ServiceRegistry {
         self.with_service(&name, |service| {
             service.monitor_task = Some(handle);
 
-            Ok(())
+            Ok(true)
         })
         .await
     }
@@ -183,9 +183,12 @@ impl ServiceRegistry {
             .await?;
 
         if should_save {
-            // Since it doesn't matter clone the state before saving for nicer async
-            self.with_registry_async(|registry| registry.stored_state.clone().save())
-                .await?;
+            self.with_registry_async(|mut registry| {
+                registry.stored_state.enabled_services.push(name);
+                // Since it doesn't matter clone the state before saving for nicer async
+                registry.stored_state.clone().save()
+            })
+            .await?;
         }
 
         Ok(())
@@ -205,9 +208,19 @@ impl ServiceRegistry {
             .await?;
 
         if should_save {
-            // Since it doesn't matter clone the state before saving for nicer async
-            self.with_registry_async(|registry| registry.stored_state.clone().save())
-                .await?;
+            self.with_registry_async(|mut registry| {
+                if let Some(i) = registry
+                    .stored_state
+                    .enabled_services
+                    .iter()
+                    .position(|s| *s == name)
+                {
+                    registry.stored_state.enabled_services.swap_remove(i);
+                }
+                // Since it doesn't matter clone the state before saving for nicer async
+                registry.stored_state.clone().save()
+            })
+            .await?;
         }
 
         Ok(())
