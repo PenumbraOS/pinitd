@@ -1,6 +1,4 @@
-use std::{
-    collections::HashMap, future::ready, path::Path, process::Stdio, sync::Arc, time::Duration,
-};
+use std::{collections::HashMap, future::ready, process::Stdio, sync::Arc, time::Duration};
 
 use nix::libc::{SIGTERM, kill};
 use pinitd_common::{CONFIG_DIR, ServiceRunState, ServiceStatus};
@@ -117,7 +115,7 @@ impl ServiceRegistry {
             })
             .await?;
 
-        if allow_start {
+        if !allow_start {
             // Already running
             return Ok(false);
         }
@@ -253,6 +251,7 @@ impl ServiceRegistry {
         let inner_registry = self.clone();
         tokio::spawn(async move {
             loop {
+                info!("Starting process\"{name}\"");
                 if let Ok((code, message)) =
                     inner_registry.perform_command(inner_name.clone()).await
                 {
@@ -283,13 +282,10 @@ impl ServiceRegistry {
 
         let config = &service.config;
 
-        info!(
-            "Spawning process for {name}: {} {:?}",
-            config.exec, config.args
-        );
+        info!("Spawning process for {name}: {}", config.command);
 
-        let child = Command::new(config.exec.clone())
-            .args(&config.args)
+        let child = Command::new("sh")
+            .args(&["-c", &config.command])
             // TODO: Auto pipe output to Android log?
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

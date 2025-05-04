@@ -25,8 +25,7 @@ impl From<&str> for RestartPolicy {
 #[derive(Debug, Clone)]
 pub struct ServiceConfig {
     pub name: String,
-    pub exec: String,
-    pub args: Vec<String>,
+    pub command: String,
     pub autostart: bool,
     pub restart: RestartPolicy,
     pub unit_file_path: PathBuf,
@@ -53,25 +52,11 @@ impl ServiceConfig {
             .trim()
             .to_string();
 
-        let exec = service_section
+        let command = service_section
             .get("Exec")
             .ok_or_else(|| Error::ConfigError("Missing \"Exec\" key in [Service]".into()))?
             .trim()
             .to_string();
-
-        let args_str = service_section.get("Args").unwrap_or("").trim();
-        let args = if args_str.is_empty() {
-            Vec::new()
-        } else {
-            // Parse arguments similarly to a shell
-            shlex::split(args_str).unwrap_or_else(|| {
-                warn!(
-                    "Failed to properly parse args for {}: '{}'. Falling back to simple space split",
-                    name, args_str
-                );
-                args_str.split_whitespace().map(String::from).collect()
-            })
-        };
 
         let autostart = service_section
             .get("Autostart")
@@ -81,7 +66,7 @@ impl ServiceConfig {
             .get("Restart")
             .map_or(RestartPolicy::None, |r| r.into());
 
-        if name.is_empty() || exec.is_empty() {
+        if name.is_empty() || command.is_empty() {
             return Err(Error::ConfigError(
                 "\"Name\" and \"Exec\" cannot be empty".into(),
             ));
@@ -89,8 +74,7 @@ impl ServiceConfig {
 
         Ok(Self {
             name,
-            exec,
-            args,
+            command,
             autostart,
             restart,
             unit_file_path: path.to_path_buf(),

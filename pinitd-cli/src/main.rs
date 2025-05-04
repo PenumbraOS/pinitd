@@ -80,21 +80,14 @@ async fn main() -> Result<(), Error> {
             Err(Error::Unknown("Daemon reported error".to_string()))
         }
         RemoteResponse::Status(info) => {
-            print_status_info(&info);
+            print_status(&[info]);
             Ok(())
         }
         RemoteResponse::List(list) => {
             if list.is_empty() {
                 println!("No services configured.");
             } else {
-                println!(
-                    "{:<20} {:<10} {:<25} {}",
-                    "NAME", "ENABLED", "STATE", "CONFIG"
-                );
-                println!("{}", "-".repeat(80));
-                for info in list {
-                    print_status_info_line(&info);
-                }
+                print_status(&list);
             }
             Ok(())
         }
@@ -105,19 +98,19 @@ async fn main() -> Result<(), Error> {
     }
 }
 
-fn print_status_info(info: &ServiceStatus) {
-    println!("Service: {}", info.name);
-    println!("  Enabled: {}", info.enabled);
-    println!("  State:   {}", info.state);
-    println!("  Config:  {:?}", info.config_path);
-}
-
-fn print_status_info_line(info: &ServiceStatus) {
+fn print_status(statuses: &[ServiceStatus]) {
     println!(
-        "{:<20} {:<10} {:<25} {:?}",
-        info.name,
-        info.enabled.to_string(),
-        info.state.to_string(),
-        info.config_path
+        "{:<20} {:<10} {:<25} {}",
+        "NAME", "ENABLED", "STATE", "CONFIG"
     );
+    println!("{}", "-".repeat(80));
+    for info in statuses {
+        println!(
+            "{:<20} {:<10} {:<25} {:?}",
+            info.name,
+            info.enabled.to_string(),
+            info.state.to_string(),
+            info.config_path
+        );
+    }
 }
