@@ -9,7 +9,7 @@ pinitd-common = { path = "../pinitd-common" }
 # android_31317_exploit = { git = "https://github.com/agg23/android_31317_exploit_rs.git" }
 android_31317_exploit = { path = "../../../cve/exploit" }
 
-android_logger = "0.15.0" 
+ai_pin_logger = { git = "https://github.com/PenumbraOS/ai_pin_logger-rs.git" }
 simple_logger = "5.0"
 log-panics = "2.1"
 log = "0.4"

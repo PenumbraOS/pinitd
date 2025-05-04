@@ -3,12 +3,12 @@ use std::process;
 use crate::error::Error;
 use clap::Parser;
 use pinitd_common::{
-    SOCKET_PATH, ServiceStatus,
+    SOCKET_ADDRESS, ServiceStatus,
     protocol::{RemoteCommand, RemoteResponse},
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::UnixStream,
+    net::TcpStream,
 };
 
 mod error;
@@ -58,7 +58,7 @@ async fn main() -> Result<(), Error> {
         Commands::Shutdown => RemoteCommand::Shutdown,
     };
 
-    let mut stream = match UnixStream::connect(SOCKET_PATH).await {
+    let mut stream = match TcpStream::connect(SOCKET_ADDRESS).await {
         Ok(stream) => stream,
         Err(_) => exit_with_message("Cannot find pinitd. Is it running?"),
     };

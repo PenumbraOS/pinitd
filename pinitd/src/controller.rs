@@ -1,22 +1,18 @@
 use std::process;
 
 use pinitd_common::{
-    create_core_directories,
+    SOCKET_ADDRESS, create_core_directories,
     protocol::{RemoteCommand, RemoteResponse},
 };
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::UnixStream,
+    io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
+    net::TcpListener,
     signal::unix::{SignalKind, signal},
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::{
-    error::Error,
-    registry::ServiceRegistry,
-    socket::{close_socket, register_socket},
-};
+use crate::{error::Error, registry::ServiceRegistry};
 
 #[derive(Clone)]
 pub struct Controller {
@@ -35,7 +31,7 @@ impl Controller {
         let shutdown_token = CancellationToken::new();
         let mut should_shutdown = setup_signal_watchers(shutdown_token.clone())?;
 
-        let control_socket = register_socket().await?;
+        let control_socket = TcpListener::bind(&SOCKET_ADDRESS).await?;
 
         info!("Controller started");
 
@@ -81,11 +77,14 @@ impl Controller {
         Ok(())
     }
 
-    async fn handle_command(
+    async fn handle_command<T>(
         &self,
-        stream: &mut UnixStream,
+        stream: &mut T,
         shutdown_token: CancellationToken,
-    ) -> Result<RemoteResponse, Error> {
+    ) -> Result<RemoteResponse, Error>
+    where
+        T: AsyncRead + Unpin,
+    {
         let mut buffer = Vec::new();
         stream.read_to_end(&mut buffer).await?;
 
@@ -182,8 +181,6 @@ async fn process_remote_command(
 async fn shutdown(registry: ServiceRegistry) -> Result<(), Error> {
     info!("Initiating daemon shutdown...");
     registry.shutdown().await?;
-
-    close_socket().await;
 
     info!("Goodbye");
 

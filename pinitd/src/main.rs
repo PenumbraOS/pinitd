@@ -1,12 +1,12 @@
 #[macro_use]
 extern crate log;
-extern crate android_logger;
+extern crate ai_pin_logger;
 
 use std::path::PathBuf;
 
-use android_31317_exploit::exploit::{ExploitKind, payload};
 #[cfg(target_os = "android")]
-use android_logger::Config;
+use ai_pin_logger::Config;
+use android_31317_exploit::exploit::{ExploitKind, payload};
 use clap::Parser;
 use controller::Controller;
 use error::Error;
@@ -18,7 +18,6 @@ use zygote::extract_and_write_fd;
 mod controller;
 mod error;
 mod registry;
-mod socket;
 mod state;
 mod types;
 mod unit;
@@ -89,7 +88,7 @@ fn init_logging_with_tag(tag: Option<String>) {
         config
     };
 
-    android_logger::init_once(config.with_max_level(LevelFilter::Trace));
+    ai_pin_logger::init_once(config.with_max_level(LevelFilter::Trace));
 }
 
 #[cfg(not(target_os = "android"))]

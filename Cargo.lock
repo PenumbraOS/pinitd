@@ -27,6 +27,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ai_pin_logger"
+version = "0.15.0"
+source = "git+https://github.com/PenumbraOS/ai_pin_logger-rs.git#91c5f5426393c44f7d0b9973bf5694ab6b4c8a4b"
+dependencies = [
+ "android_log-sys",
+ "env_filter",
+ "log",
+]
+
+[[package]]
 name = "android_31317_exploit"
 version = "0.1.0"
 dependencies = [
@@ -41,17 +51,6 @@ name = "android_log-sys"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "84521a3cf562bc62942e294181d9eef17eb38ceb8c68677bc49f144e4c3d4f8d"
-
-[[package]]
-name = "android_logger"
-version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6f39be698127218cca460cb624878c9aa4e2b47dba3b277963d2bf00bad263b"
-dependencies = [
- "android_log-sys",
- "env_filter",
- "log",
-]
 
 [[package]]
 name = "anstream"
@@ -479,8 +478,8 @@ checksum = "3b3cff922bd51709b605d9ead9aa71031d81447142d828eb4a6eba76fe619f9b"
 name = "pinitd"
 version = "0.1.0"
 dependencies = [
+ "ai_pin_logger",
  "android_31317_exploit",
- "android_logger",
  "bincode",
  "clap",
  "log",

@@ -22,7 +22,7 @@ impl StoredState {
                     enabled_services: Vec::new(),
                 })
             }
-            Err(e) => Err(e)?,
+            Err(e) => Err(Error::ConfigError(e.to_string()))?,
         }
     }
 

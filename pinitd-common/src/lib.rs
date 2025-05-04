@@ -6,13 +6,10 @@ use std::{
 
 pub mod protocol;
 
-#[cfg(target_os = "android")]
-pub const SOCKET_PATH: &str = "/data/local/tmp/jailbreak/pinitd/initd.sock";
-#[cfg(not(target_os = "android"))]
-pub const SOCKET_PATH: &str = "test_data/pinitd/initd.sock";
+pub const SOCKET_ADDRESS: &str = "127.0.0.1:1717";
 
 #[cfg(target_os = "android")]
-pub const CONFIG_DIR: &str = "/data/local/jailbreak_units/";
+pub const CONFIG_DIR: &str = "/data/local/tmp/jailbreak_units/";
 #[cfg(not(target_os = "android"))]
 pub const CONFIG_DIR: &str = "test_data/jailbreak_units/";
 
@@ -49,13 +46,7 @@ pub struct ServiceStatus {
 }
 
 pub fn create_core_directories() {
-    if let Some(parent) = Path::new(SOCKET_PATH).parent() {
-        let _ = create_dir_all(parent);
-    }
-
-    if let Some(parent) = Path::new(CONFIG_DIR).parent() {
-        let _ = create_dir_all(parent);
-    }
+    let _ = create_dir_all(CONFIG_DIR);
 
     if let Some(parent) = Path::new(STATE_FILE).parent() {
         let _ = create_dir_all(parent);
