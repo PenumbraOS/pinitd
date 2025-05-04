@@ -24,6 +24,7 @@ pub const STATE_FILE: &str = "test_data/pinitd/initd.state";
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum ServiceRunState {
     Stopped,
+    Stopping,
     Running { pid: i32 },
     Failed { reason: String },
 }
@@ -32,6 +33,7 @@ impl std::fmt::Display for ServiceRunState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Stopped => write!(f, "Stopped"),
+            Self::Stopping => write!(f, "Stopping"),
             Self::Running { pid } => write!(f, "Running (PID: {})", pid),
             Self::Failed { reason } => write!(f, "Failed: {}", reason),
         }

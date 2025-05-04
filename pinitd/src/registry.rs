@@ -255,8 +255,23 @@ impl ServiceRegistry {
                 if let Ok((code, message)) =
                     inner_registry.perform_command(inner_name.clone()).await
                 {
+                    let mut expected_stop = false;
+
+                    if let Ok(state) = inner_registry
+                        .with_service(&inner_name, |service| Ok(service.state.clone()))
+                        .await
+                    {
+                        // If we were in stopping, we expected the process to close. Don't mark it a failure
+                        expected_stop = matches!(state, ServiceRunState::Stopping);
+                    }
+
                     if !inner_registry
-                        .should_restart(inner_name.clone(), code != 0, message)
+                        .stop_and_should_restart(
+                            inner_name.clone(),
+                            code != 0,
+                            expected_stop,
+                            message,
+                        )
                         .await
                     {
                         // Terminate restart loop
@@ -335,9 +350,15 @@ impl ServiceRegistry {
         }
     }
 
-    async fn should_restart(&self, name: String, did_fail: bool, exit_message: String) -> bool {
+    async fn stop_and_should_restart(
+        &self,
+        name: String,
+        did_fail: bool,
+        expected_stop: bool,
+        exit_message: String,
+    ) -> bool {
         self.with_service(&name, |service| {
-            if did_fail {
+            if did_fail && !expected_stop {
                 warn!(
                     "Service \"{name}\" transitioned to Failed state with message {exit_message}"
                 );
@@ -349,7 +370,12 @@ impl ServiceRegistry {
                 service.state = ServiceRunState::Stopped;
             }
 
-            let should_restart: bool = service.config.restart == RestartPolicy::Always
+            if expected_stop {
+                // Do not restart
+                return Ok(false);
+            }
+
+            let should_restart = service.config.restart == RestartPolicy::Always
                 || (did_fail && service.config.restart == RestartPolicy::OnFailure);
             if service.enabled && should_restart {
                 warn!("Restarting service \"{name}\" due to exit: {exit_message}");
@@ -371,8 +397,12 @@ impl ServiceRegistry {
 fn service_stop_internal(name: &str, service: &mut Service) {
     match &service.state {
         ServiceRunState::Running { pid } => {
+            let pid = pid.clone();
+            // Transition to stopping to mark this as an intentional service stop
+            service.state = ServiceRunState::Stopping;
+
             info!("Attempting to stop service \"{name}\" (pid: {pid}). Sending SIGTERM");
-            let result = unsafe { kill(*pid, SIGTERM) };
+            let result = unsafe { kill(pid, SIGTERM) };
             if result != 0 {
                 warn!("Failed to send SIGTERM to pid {pid}: result {result}");
                 // If we have a handle, attempt to kill via handle
