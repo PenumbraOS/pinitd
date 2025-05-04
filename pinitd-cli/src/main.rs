@@ -24,10 +24,14 @@ enum Commands {
     Start { name: String },
     /// Stop a service
     Stop { name: String },
+    /// Restart a service
+    Restart { name: String },
     /// Enable a service (start on daemon boot if autostart=true)
     Enable { name: String },
     /// Disable a service (prevent autostart)
     Disable { name: String },
+    /// Reload a service config
+    Reload { name: String },
     /// Show status of a specific service
     Status { name: String },
     /// List all known services and their status
@@ -43,8 +47,10 @@ async fn main() -> Result<(), Error> {
     let initd_command = match cli.command {
         Commands::Start { name } => RemoteCommand::Start(name),
         Commands::Stop { name } => RemoteCommand::Stop(name),
+        Commands::Restart { name } => RemoteCommand::Restart(name),
         Commands::Enable { name } => RemoteCommand::Enable(name),
         Commands::Disable { name } => RemoteCommand::Disable(name),
+        Commands::Reload { name } => RemoteCommand::Reload(name),
         Commands::Status { name } => RemoteCommand::Status(name),
         Commands::List => RemoteCommand::List,
         Commands::Shutdown => RemoteCommand::Shutdown,

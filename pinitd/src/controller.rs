@@ -125,23 +125,25 @@ async fn process_remote_command(
     shutdown_token: CancellationToken,
 ) -> RemoteResponse {
     match command {
-        RemoteCommand::Start(name) => {
-            match registry.spawn_and_monitor_service(name.clone()).await {
-                Ok(did_start) => {
-                    if did_start {
-                        RemoteResponse::Success(format!("Service \"{name}\" started",))
-                    } else {
-                        RemoteResponse::Success(format!("Service \"{name}\" already running",))
-                    }
-                }
-                Err(err) => {
-                    RemoteResponse::Error(format!("Failed to start service \"{name}\": {err}"))
+        RemoteCommand::Start(name) => match registry.service_start(name.clone()).await {
+            Ok(did_start) => {
+                if did_start {
+                    RemoteResponse::Success(format!("Service \"{name}\" started",))
+                } else {
+                    RemoteResponse::Success(format!("Service \"{name}\" already running",))
                 }
             }
-        }
+            Err(err) => RemoteResponse::Error(format!("Failed to start service \"{name}\": {err}")),
+        },
         RemoteCommand::Stop(name) => match registry.service_stop(name.clone()).await {
             Ok(_) => RemoteResponse::Success(format!("Service \"{name}\" stop initiated.")),
             Err(err) => RemoteResponse::Error(format!("Failed to stop service \"{name}\": {err}")),
+        },
+        RemoteCommand::Restart(name) => match registry.service_restart(name.clone()).await {
+            Ok(_) => RemoteResponse::Success(format!("Service \"{name}\" restarted")),
+            Err(err) => {
+                RemoteResponse::Error(format!("Failed to restart service \"{name}\": {err}"))
+            }
         },
         RemoteCommand::Enable(name) => match registry.service_enable(name.clone()).await {
             Ok(_) => RemoteResponse::Success(format!("Service \"{name}\" enabled")),
@@ -155,10 +157,13 @@ async fn process_remote_command(
                 RemoteResponse::Error(format!("Failed to disable service \"{name}\": {err}"))
             }
         },
-        RemoteCommand::Status(name) => match registry
-            .with_service(&name, |service| Ok(service.status()))
-            .await
-        {
+        RemoteCommand::Reload(name) => match registry.service_reload(name.clone()).await {
+            Ok(_) => RemoteResponse::Success(format!("Service \"{name}\" reloaded")),
+            Err(err) => {
+                RemoteResponse::Error(format!("Failed to reload service \"{name}\": {err}"))
+            }
+        },
+        RemoteCommand::Status(name) => match registry.service_status(name).await {
             Ok(status) => RemoteResponse::Status(status),
             Err(err) => RemoteResponse::Error(err.to_string()),
         },

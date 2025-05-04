@@ -7,8 +7,10 @@ use crate::ServiceStatus;
 pub enum RemoteCommand {
     Start(String),
     Stop(String),
+    Restart(String),
     Enable(String),
     Disable(String),
+    Reload(String),
     Status(String),
     List,
     Shutdown,

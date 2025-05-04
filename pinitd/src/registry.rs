@@ -1,4 +1,6 @@
-use std::{collections::HashMap, future::ready, process::Stdio, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap, future::ready, path::Path, process::Stdio, sync::Arc, time::Duration,
+};
 
 use nix::libc::{SIGTERM, kill};
 use pinitd_common::{CONFIG_DIR, ServiceRunState, ServiceStatus};
@@ -33,43 +35,30 @@ impl ServiceRegistry {
         info!("Loading service configurations from {}", CONFIG_DIR);
         let mut directory = fs::read_dir(CONFIG_DIR).await?;
 
-        let mut registry = HashMap::new();
+        let registry = HashMap::new();
 
-        while let Some(entry) = directory.next_entry().await? {
-            let path = entry.path();
-            if path.is_file() && path.extension().map_or(false, |ext| ext == "unit") {
-                info!("Found config {}", path.display());
-                match ServiceConfig::parse(&path).await {
-                    Ok(config) => {
-                        let name = config.name.clone();
-                        let enabled = state.enabled_services.contains(&name);
-                        info!("Loaded config: {} (Enabled: {})", name, enabled);
-
-                        let runtime = Service {
-                            config,
-                            state: ServiceRunState::Stopped,
-                            enabled,
-                            monitor_task: None,
-                        };
-                        registry.insert(name, runtime);
-                    }
-                    Err(e) => {
-                        warn!("Failed to parse unit file {:?}: {}", path, e);
-                    }
-                }
-            }
-        }
-
-        info!(
-            "Finished loading configurations. {} services loaded.",
-            registry.len()
-        );
         let inner = InnerServiceRegistry {
             stored_state: state,
             registry,
         };
 
-        Ok(ServiceRegistry(Arc::new(Mutex::new(inner))))
+        let registry = ServiceRegistry(Arc::new(Mutex::new(inner)));
+        let mut load_count = 0;
+
+        while let Some(entry) = directory.next_entry().await? {
+            let path = entry.path();
+            if path.is_file() && path.extension().map_or(false, |ext| ext == "unit") {
+                info!("Found config {}", path.display());
+                // Eat errors
+                if let Ok(_) = registry.load_unit(&path).await {
+                    load_count += 1;
+                }
+            }
+        }
+
+        info!("Finished loading configurations. {load_count} services loaded.",);
+
+        Ok(registry)
     }
 
     async fn with_registry<F, R>(&self, func: F) -> Result<R, Error>
@@ -103,7 +92,44 @@ impl ServiceRegistry {
         Ok(result)
     }
 
-    pub async fn spawn_and_monitor_service(&self, name: String) -> Result<bool, Error> {
+    async fn load_unit(&self, path: &Path) -> Result<bool, Error> {
+        match ServiceConfig::parse(path).await {
+            Ok(config) => {
+                self.with_registry(|mut registry| {
+                    let name = config.name.clone();
+                    let service = registry.registry.get_mut(&name);
+                    let enabled = service.as_ref().map_or(false, |s| s.enabled);
+                    info!("Loaded config: {name} (Enabled: {enabled})");
+
+                    if let Some(service) = service {
+                        if config != service.config {
+                            service.config = config;
+                            Ok(true)
+                        } else {
+                            Ok(false)
+                        }
+                    } else {
+                        let runtime = Service {
+                            config,
+                            state: ServiceRunState::Stopped,
+                            enabled,
+                            monitor_task: None,
+                        };
+
+                        registry.registry.insert(name, runtime);
+                        Ok(true)
+                    }
+                })
+                .await
+            }
+            Err(e) => {
+                warn!("Failed to parse unit file {:?}: {}", path, e);
+                Err(e)
+            }
+        }
+    }
+
+    pub async fn service_start(&self, name: String) -> Result<bool, Error> {
         let allow_start = self
             .with_service(&name, |service| {
                 if !service.enabled {
@@ -154,7 +180,7 @@ impl ServiceRegistry {
             }
 
             info!("Autostarting service: {}", name);
-            let _ = self.spawn_and_monitor_service(name.clone()).await;
+            let _ = self.service_start(name.clone()).await;
         }
 
         info!("Autostart sequence complete.");
@@ -165,6 +191,14 @@ impl ServiceRegistry {
     pub async fn service_stop(&self, name: String) -> Result<(), Error> {
         self.with_service(&name, |service| Ok(service_stop_internal(&name, service)))
             .await
+    }
+
+    pub async fn service_restart(&self, name: String) -> Result<(), Error> {
+        info!("Restarting service \"{name}\"");
+        self.service_stop(name.clone()).await?;
+        self.service_start(name).await?;
+
+        Ok(())
     }
 
     pub async fn service_enable(&self, name: String) -> Result<(), Error> {
@@ -222,6 +256,19 @@ impl ServiceRegistry {
         }
 
         Ok(())
+    }
+
+    pub async fn service_reload(&self, name: String) -> Result<(), Error> {
+        let path = self
+            .with_service(&name, |service| Ok(service.config.unit_file_path.clone()))
+            .await?;
+
+        let did_change = self.load_unit(&path).await?;
+        if did_change {
+            self.service_restart(name).await
+        } else {
+            Ok(())
+        }
     }
 
     pub async fn service_status(&self, name: String) -> Result<ServiceStatus, Error> {

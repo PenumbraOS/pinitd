@@ -22,7 +22,7 @@ impl From<&str> for RestartPolicy {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ServiceConfig {
     pub name: String,
     pub command: String,
