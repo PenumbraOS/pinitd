@@ -452,13 +452,13 @@ fn service_stop_internal(name: &str, service: &mut Service) {
             let result = unsafe { kill(pid, SIGTERM) };
             if result != 0 {
                 warn!("Failed to send SIGTERM to pid {pid}: result {result}");
-                // If we have a handle, attempt to kill via handle
-                if let Some(handle) = &service.monitor_task {
-                    handle.abort();
-                }
-                // Make sure handle drops
-                service.monitor_task = None;
             }
+            // If we have a handle, attempt to kill via handle
+            if let Some(handle) = &service.monitor_task {
+                handle.abort();
+            }
+            // Make sure handle drops
+            service.monitor_task = None;
         }
         _ => {
             warn!("Service \"{name}\" is not running");
