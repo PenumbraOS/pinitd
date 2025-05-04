@@ -215,12 +215,24 @@ impl ServiceRegistry {
             .await?;
 
         if should_save {
-            self.with_registry_async(|mut registry| {
-                registry.stored_state.enabled_services.push(name);
-                // Since it doesn't matter clone the state before saving for nicer async
-                registry.stored_state.clone().save()
-            })
-            .await?;
+            let state = self
+                .with_registry(|mut registry| {
+                    if !registry
+                        .stored_state
+                        .enabled_services
+                        .iter()
+                        .find(|s| **s == name)
+                        .is_some()
+                    {
+                        // Service is not already enabled
+                        registry.stored_state.enabled_services.push(name);
+                    }
+                    // Since it doesn't matter clone the state before saving for nicer async
+                    Ok(registry.stored_state.clone())
+                })
+                .await?;
+
+            state.save().await?;
         }
 
         Ok(())
