@@ -4,7 +4,7 @@ use crate::error::Error;
 use clap::Parser;
 use pinitd_common::{
     SOCKET_ADDRESS, ServiceStatus,
-    protocol::{RemoteCommand, RemoteResponse},
+    protocol::{CLICommand, CLIResponse},
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -47,15 +47,15 @@ async fn main() -> Result<(), Error> {
     let cli = Cli::parse();
 
     let initd_command = match cli.command {
-        Commands::Start { name } => RemoteCommand::Start(name),
-        Commands::Stop { name } => RemoteCommand::Stop(name),
-        Commands::Restart { name } => RemoteCommand::Restart(name),
-        Commands::Enable { name } => RemoteCommand::Enable(name),
-        Commands::Disable { name } => RemoteCommand::Disable(name),
-        Commands::Reload { name } => RemoteCommand::Reload(name),
-        Commands::Status { name } => RemoteCommand::Status(name),
-        Commands::List => RemoteCommand::List,
-        Commands::Shutdown => RemoteCommand::Shutdown,
+        Commands::Start { name } => CLICommand::Start(name),
+        Commands::Stop { name } => CLICommand::Stop(name),
+        Commands::Restart { name } => CLICommand::Restart(name),
+        Commands::Enable { name } => CLICommand::Enable(name),
+        Commands::Disable { name } => CLICommand::Disable(name),
+        Commands::Reload { name } => CLICommand::Reload(name),
+        Commands::Status { name } => CLICommand::Status(name),
+        Commands::List => CLICommand::List,
+        Commands::Shutdown => CLICommand::Shutdown,
     };
 
     let mut stream = match TcpStream::connect(SOCKET_ADDRESS).await {
@@ -75,21 +75,21 @@ async fn main() -> Result<(), Error> {
         exit_with_message("pinitd closed connection without sending a response")
     }
 
-    let (response, _) = RemoteResponse::decode(&response_buffer)?;
+    let (response, _) = CLIResponse::decode(&response_buffer)?;
 
     match response {
-        RemoteResponse::Success(msg) => {
+        CLIResponse::Success(msg) => {
             println!("{}", msg);
             Ok(())
         }
-        RemoteResponse::Error(msg) => {
+        CLIResponse::Error(msg) => {
             exit_with_message(&format!("Error: {msg}"));
         }
-        RemoteResponse::Status(info) => {
+        CLIResponse::Status(info) => {
             print_status(&[info]);
             Ok(())
         }
-        RemoteResponse::List(list) => {
+        CLIResponse::List(list) => {
             if list.is_empty() {
                 println!("No services configured");
             } else {
@@ -97,7 +97,7 @@ async fn main() -> Result<(), Error> {
             }
             Ok(())
         }
-        RemoteResponse::ShuttingDown => {
+        CLIResponse::ShuttingDown => {
             println!("Shutting down");
             Ok(())
         }

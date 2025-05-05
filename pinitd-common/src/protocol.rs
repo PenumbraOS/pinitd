@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::ServiceStatus;
 
 #[derive(Serialize, Deserialize, Debug)]
-pub enum RemoteCommand {
+pub enum CLICommand {
     Start(String),
     Stop(String),
     Restart(String),
@@ -17,7 +17,7 @@ pub enum RemoteCommand {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub enum RemoteResponse {
+pub enum CLIResponse {
     Success(String),
     Error(String),
     Status(ServiceStatus),
@@ -25,7 +25,7 @@ pub enum RemoteResponse {
     ShuttingDown,
 }
 
-impl RemoteCommand {
+impl CLICommand {
     pub fn encode(self) -> Result<Vec<u8>, EncodeError> {
         bincode::serde::encode_to_vec(self, bincode::config::standard())
     }
@@ -35,7 +35,7 @@ impl RemoteCommand {
     }
 }
 
-impl RemoteResponse {
+impl CLIResponse {
     pub fn encode(self) -> Result<Vec<u8>, EncodeError> {
         bincode::serde::encode_to_vec(self, bincode::config::standard())
     }

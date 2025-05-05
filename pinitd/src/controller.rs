@@ -2,7 +2,7 @@ use std::process;
 
 use pinitd_common::{
     SOCKET_ADDRESS, create_core_directories,
-    protocol::{RemoteCommand, RemoteResponse},
+    protocol::{CLICommand, CLIResponse},
 };
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
@@ -81,14 +81,14 @@ impl Controller {
         &self,
         stream: &mut T,
         shutdown_token: CancellationToken,
-    ) -> Result<RemoteResponse, Error>
+    ) -> Result<CLIResponse, Error>
     where
         T: AsyncRead + Unpin,
     {
         let mut buffer = Vec::new();
         stream.read_to_end(&mut buffer).await?;
 
-        let (command, _) = RemoteCommand::decode(&buffer)?;
+        let (command, _) = CLICommand::decode(&buffer)?;
         info!("Received RemoteCommand: {:?}", command);
 
         let response = process_remote_command(command, self.registry.clone(), shutdown_token).await;
@@ -119,61 +119,53 @@ fn setup_signal_watchers(shutdown_token: CancellationToken) -> Result<JoinHandle
 }
 
 async fn process_remote_command(
-    command: RemoteCommand,
+    command: CLICommand,
     registry: ServiceRegistry,
     shutdown_token: CancellationToken,
-) -> RemoteResponse {
+) -> CLIResponse {
     match command {
-        RemoteCommand::Start(name) => match registry.service_start(name.clone()).await {
+        CLICommand::Start(name) => match registry.service_start(name.clone()).await {
             Ok(did_start) => {
                 if did_start {
-                    RemoteResponse::Success(format!("Service \"{name}\" started",))
+                    CLIResponse::Success(format!("Service \"{name}\" started",))
                 } else {
-                    RemoteResponse::Success(format!("Service \"{name}\" already running",))
+                    CLIResponse::Success(format!("Service \"{name}\" already running",))
                 }
             }
-            Err(err) => RemoteResponse::Error(format!("Failed to start service \"{name}\": {err}")),
+            Err(err) => CLIResponse::Error(format!("Failed to start service \"{name}\": {err}")),
         },
-        RemoteCommand::Stop(name) => match registry.service_stop(name.clone()).await {
-            Ok(_) => RemoteResponse::Success(format!("Service \"{name}\" stop initiated.")),
-            Err(err) => RemoteResponse::Error(format!("Failed to stop service \"{name}\": {err}")),
+        CLICommand::Stop(name) => match registry.service_stop(name.clone()).await {
+            Ok(_) => CLIResponse::Success(format!("Service \"{name}\" stop initiated.")),
+            Err(err) => CLIResponse::Error(format!("Failed to stop service \"{name}\": {err}")),
         },
-        RemoteCommand::Restart(name) => match registry.service_restart(name.clone()).await {
-            Ok(_) => RemoteResponse::Success(format!("Service \"{name}\" restarted")),
-            Err(err) => {
-                RemoteResponse::Error(format!("Failed to restart service \"{name}\": {err}"))
-            }
+        CLICommand::Restart(name) => match registry.service_restart(name.clone()).await {
+            Ok(_) => CLIResponse::Success(format!("Service \"{name}\" restarted")),
+            Err(err) => CLIResponse::Error(format!("Failed to restart service \"{name}\": {err}")),
         },
-        RemoteCommand::Enable(name) => match registry.service_enable(name.clone()).await {
-            Ok(_) => RemoteResponse::Success(format!("Service \"{name}\" enabled")),
-            Err(err) => {
-                RemoteResponse::Error(format!("Failed to enable service \"{name}\": {err}"))
-            }
+        CLICommand::Enable(name) => match registry.service_enable(name.clone()).await {
+            Ok(_) => CLIResponse::Success(format!("Service \"{name}\" enabled")),
+            Err(err) => CLIResponse::Error(format!("Failed to enable service \"{name}\": {err}")),
         },
-        RemoteCommand::Disable(name) => match registry.service_disable(name.clone()).await {
-            Ok(_) => RemoteResponse::Success(format!("Service \"{name}\" disabled")),
-            Err(err) => {
-                RemoteResponse::Error(format!("Failed to disable service \"{name}\": {err}"))
-            }
+        CLICommand::Disable(name) => match registry.service_disable(name.clone()).await {
+            Ok(_) => CLIResponse::Success(format!("Service \"{name}\" disabled")),
+            Err(err) => CLIResponse::Error(format!("Failed to disable service \"{name}\": {err}")),
         },
-        RemoteCommand::Reload(name) => match registry.service_reload(name.clone()).await {
-            Ok(_) => RemoteResponse::Success(format!("Service \"{name}\" reloaded")),
-            Err(err) => {
-                RemoteResponse::Error(format!("Failed to reload service \"{name}\": {err}"))
-            }
+        CLICommand::Reload(name) => match registry.service_reload(name.clone()).await {
+            Ok(_) => CLIResponse::Success(format!("Service \"{name}\" reloaded")),
+            Err(err) => CLIResponse::Error(format!("Failed to reload service \"{name}\": {err}")),
         },
-        RemoteCommand::Status(name) => match registry.service_status(name).await {
-            Ok(status) => RemoteResponse::Status(status),
-            Err(err) => RemoteResponse::Error(err.to_string()),
+        CLICommand::Status(name) => match registry.service_status(name).await {
+            Ok(status) => CLIResponse::Status(status),
+            Err(err) => CLIResponse::Error(err.to_string()),
         },
-        RemoteCommand::List => match registry.service_list_all().await {
-            Ok(list) => RemoteResponse::List(list),
-            Err(err) => RemoteResponse::Error(format!("Failed to retrieve service list: {err}")),
+        CLICommand::List => match registry.service_list_all().await {
+            Ok(list) => CLIResponse::List(list),
+            Err(err) => CLIResponse::Error(format!("Failed to retrieve service list: {err}")),
         },
-        RemoteCommand::Shutdown => {
+        CLICommand::Shutdown => {
             info!("Shutdown RemoteCommand received.");
             shutdown_token.cancel();
-            RemoteResponse::ShuttingDown // Respond immediately
+            CLIResponse::ShuttingDown // Respond immediately
         }
     }
 }
