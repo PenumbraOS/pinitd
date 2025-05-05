@@ -4,6 +4,7 @@ use crate::error::Error;
 use clap::Parser;
 use pinitd_common::{
     SOCKET_ADDRESS, ServiceStatus,
+    bincode::Bincodable,
     protocol::{CLICommand, CLIResponse},
 };
 use tokio::{

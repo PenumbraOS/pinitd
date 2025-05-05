@@ -1,7 +1,9 @@
 use std::process;
 
 use pinitd_common::{
-    SOCKET_ADDRESS, create_core_directories,
+    SOCKET_ADDRESS,
+    bincode::Bincodable,
+    create_core_directories,
     protocol::{CLICommand, CLIResponse},
 };
 use tokio::{

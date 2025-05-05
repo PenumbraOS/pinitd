@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub mod bincode;
 pub mod protocol;
 
 pub const SOCKET_ADDRESS: &str = "127.0.0.1:1717";

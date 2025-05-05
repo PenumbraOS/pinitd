@@ -28,6 +28,16 @@ struct InnerServiceRegistry {
 pub struct ServiceRegistry(Arc<Mutex<InnerServiceRegistry>>);
 
 impl ServiceRegistry {
+    pub fn empty() -> Result<Self, Error> {
+        let inner = InnerServiceRegistry {
+            stored_state: StoredState::dummy(),
+            registry: HashMap::new(),
+        };
+
+        let registry = ServiceRegistry(Arc::new(Mutex::new(inner)));
+        Ok(registry)
+    }
+
     pub async fn load() -> Result<Self, Error> {
         let state = StoredState::load().await?;
         info!("Loaded enabled state for: {:?}", state.enabled_services);
@@ -97,8 +107,8 @@ impl ServiceRegistry {
             Ok(config) => {
                 self.with_registry(|mut registry| {
                     let name = config.name.clone();
+                    let enabled = registry.stored_state.enabled(&name);
                     let service = registry.registry.get_mut(&name);
-                    let enabled = service.as_ref().map_or(false, |s| s.enabled);
                     info!("Loaded config: {name} (Enabled: {enabled})");
 
                     if let Some(service) = service {
@@ -109,14 +119,7 @@ impl ServiceRegistry {
                             Ok(false)
                         }
                     } else {
-                        let runtime = Service {
-                            config,
-                            state: ServiceRunState::Stopped,
-                            enabled,
-                            monitor_task: None,
-                        };
-
-                        registry.registry.insert(name, runtime);
+                        create_and_insert_unit(&mut registry, config, enabled);
                         Ok(true)
                     }
                 })
@@ -127,6 +130,23 @@ impl ServiceRegistry {
                 Err(e)
             }
         }
+    }
+
+    pub async fn insert_unit(&self, config: ServiceConfig, enabled: bool) -> Result<(), Error> {
+        self.with_registry(|mut registry| {
+            create_and_insert_unit(&mut registry, config, enabled);
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn remove_unit(&self, name: String) -> Result<(), Error> {
+        self.service_stop(name.clone()).await?;
+        self.with_registry(|mut registry| {
+            registry.registry.remove(&name);
+            Ok(())
+        })
+        .await
     }
 
     pub async fn service_start(&self, name: String) -> Result<bool, Error> {
@@ -214,6 +234,7 @@ impl ServiceRegistry {
             })
             .await?;
 
+        // TODO: Use enable_service
         if should_save {
             let state = self
                 .with_registry(|mut registry| {
@@ -239,6 +260,7 @@ impl ServiceRegistry {
     }
 
     pub async fn service_disable(&self, name: String) -> Result<(), Error> {
+        // TODO: Use disable_service
         let should_save = self
             .with_service(&name, |service| {
                 if !service.enabled {
@@ -476,4 +498,20 @@ fn service_stop_internal(name: &str, service: &mut Service) {
             warn!("Service \"{name}\" is not running");
         }
     }
+}
+
+fn create_and_insert_unit(
+    registry: &mut MutexGuard<'_, InnerServiceRegistry>,
+    config: ServiceConfig,
+    enabled: bool,
+) {
+    let name = config.name.clone();
+    let runtime = Service {
+        config,
+        state: ServiceRunState::Stopped,
+        enabled,
+        monitor_task: None,
+    };
+
+    registry.registry.insert(name, runtime);
 }

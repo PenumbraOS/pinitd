@@ -13,14 +13,18 @@ use error::Error;
 use log::LevelFilter;
 #[cfg(not(target_os = "android"))]
 use simple_logger::SimpleLogger;
+use worker::Worker;
 use zygote::extract_and_write_fd;
 
 mod controller;
 mod error;
+mod process;
 mod registry;
 mod state;
 mod types;
 mod unit;
+mod worker;
+mod worker_protocol;
 mod zygote;
 
 /// Custom init system for Ai Pin
@@ -29,6 +33,8 @@ mod zygote;
 enum Args {
     /// Specializes this process as the controller, pid 2000 (shell), process
     Controller(NoAdditionalArgs),
+    /// Specializes this process as the worker, pid 1000 (system), process
+    Worker(NoAdditionalArgs),
     /// Create custom exploit payload. NOTE: This is for internal use; rely on the pinitd for launching other processes
     BuildPayload(NoAdditionalArgs),
 }
@@ -61,11 +67,14 @@ async fn run() -> Result<(), Error> {
 
     match Args::try_parse()? {
         Args::Controller(_) => {
-            // Spawn the worker and enter work loop
             init_logging_with_tag(Some("pinitd-controller".into()));
             warn!("Starting controller");
-            // This uses the priviledged binary, not our binary
             Ok(Controller::create().await?)
+        }
+        Args::Worker(_) => {
+            init_logging_with_tag(Some("pinitd-worker".into()));
+            warn!("Starting worker");
+            Ok(Worker::create().await?)
         }
         Args::BuildPayload(_) => {
             init_logging_with_tag(None);
