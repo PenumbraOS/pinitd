@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use pinitd_common::{SOCKET_ADDRESS, bincode::Bincodable};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -39,6 +41,7 @@ impl Worker {
                         stream.read_exact(&mut buffer).await?;
 
                         let (command, _) = WorkerCommand::decode(&buffer)?;
+                        info!("Received command {command:?}");
 
                         let response = match handle_command(command, &mut registry, &token).await {
                             Ok(response) => response,
@@ -87,10 +90,16 @@ async fn handle_command(
         WorkerCommand::Restart(name) => {
             registry.service_restart(name).await?;
         }
+        WorkerCommand::Status => {
+            let status = registry.service_list_all().await?;
+            let status_iter = status.into_iter().map(|s| (s.name, s.state));
+            return Ok(WorkerResponse::Status(HashMap::from_iter(status_iter)));
+        }
         WorkerCommand::Shutdown => {
             registry.shutdown();
             // Trigger process shutdown
             token.cancel();
+            return Ok(WorkerResponse::ShuttingDown);
         }
     };
 
