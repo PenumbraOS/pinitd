@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use pinitd_common::{SOCKET_ADDRESS, bincode::Bincodable};
+use pinitd_common::{CONTROL_SOCKET_ADDRESS, bincode::Bincodable};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -11,22 +11,22 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     error::Error,
     registry::ServiceRegistry,
-    worker_protocol::{WORKER_COMMAND_LENGTH_COUNT, WorkerCommand, WorkerResponse},
+    worker::protocol::{WorkerCommand, WorkerResponse},
 };
 
-pub struct Worker;
+pub struct WorkerProcess;
 
-impl Worker {
+impl WorkerProcess {
     pub async fn create() -> Result<(), Error> {
         info!("Connecting to controller");
-        let mut stream = TcpStream::connect(SOCKET_ADDRESS).await?;
+        let mut stream = TcpStream::connect(CONTROL_SOCKET_ADDRESS).await?;
         info!("Controller connected");
 
         let mut registry = ServiceRegistry::empty()?;
         let token = CancellationToken::new();
 
         loop {
-            let mut len_bytes = [0; WORKER_COMMAND_LENGTH_COUNT];
+            let mut len_bytes = [0; std::mem::size_of::<u64>()];
 
             select! {
                 _ = token.cancelled() => {

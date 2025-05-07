@@ -16,6 +16,9 @@ pub enum Error {
     #[error("Arg parse error {0}")]
     ArgError(#[from] clap::Error),
 
+    #[error("Error reading from worker bridge: {0}")]
+    WorkerProtocolError(String),
+
     #[error("Unknown service: \"{0}\"")]
     UnknownServiceError(String),
     #[error("Failed to parse config: {0}")]

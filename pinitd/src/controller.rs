@@ -1,7 +1,7 @@
-use std::process;
+use std::{process, sync::Arc, time::Duration};
 
 use pinitd_common::{
-    SOCKET_ADDRESS,
+    CONTROL_SOCKET_ADDRESS, WORKER_SOCKET_ADDRESS,
     bincode::Bincodable,
     create_core_directories,
     protocol::{CLICommand, CLIResponse},
@@ -10,15 +10,18 @@ use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
     signal::unix::{SignalKind, signal},
+    sync::Mutex,
     task::JoinHandle,
+    time::sleep,
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::{error::Error, registry::ServiceRegistry};
+use crate::{error::Error, registry::ServiceRegistry, worker::connection::WorkerConnection};
 
 #[derive(Clone)]
 pub struct Controller {
     registry: ServiceRegistry,
+    worker_connection: Arc<Mutex<Option<WorkerConnection>>>,
 }
 
 impl Controller {
@@ -28,55 +31,101 @@ impl Controller {
         let registry = ServiceRegistry::load().await?;
         registry.autostart_all().await?;
 
-        let controller = Controller { registry };
+        let controller = Controller {
+            registry,
+            worker_connection: Arc::new(Mutex::new(None)),
+        };
+
+        let worker_controller = controller.clone();
+        worker_controller.start_worker().await?;
 
         let shutdown_token = CancellationToken::new();
-        let mut should_shutdown = setup_signal_watchers(shutdown_token.clone())?;
-
-        let control_socket = TcpListener::bind(&SOCKET_ADDRESS).await?;
+        let shutdown_signal = setup_signal_watchers(shutdown_token.clone())?;
 
         info!("Controller started");
+        let controller_clone = controller.clone();
+        tokio::spawn(async move {
+            let _ = controller_clone
+                .start_cli_listener(shutdown_token.clone())
+                .await;
+        });
 
-        loop {
-            tokio::select! {
-                result = control_socket.accept() => {
-                    match result {
-                        Ok((mut stream, _)) => {
-                            info!("Accepted new client connection");
-                            let controller_clone = controller.clone();
-                            let shutdown_token_clone = shutdown_token.clone();
-                            tokio::spawn(async move {
-                                match controller_clone.handle_command(&mut stream, shutdown_token_clone).await {
-                                    Ok(response) => {
-                                        match response.encode() {
-                                            Ok(data) => {
-                                                let _ = stream.write_all(&data).await;
-                                                let _ = stream.shutdown().await;
-                                            },
-                                            Err(err) => error!("Error responding to client: {err:?}"),
-                                        }
-                                    },
-                                    Err(err) => error!("Error handling client: {err:?}"),
-                                }
-                            });
-                        }
-                        Err(e) => {
-                            error!("Error accepting control connection: {}", e);
-                        }
-                    }
-                }
-                _ = &mut should_shutdown => {
-                    info!("Signal shutdown received");
-                    break;
-                }
-            }
-        }
+        let _ = shutdown_signal.await;
+        info!("Shutting down");
 
         shutdown(controller.registry).await?;
 
         info!("After shutdown");
 
         Ok(())
+    }
+
+    async fn start_worker(self) -> Result<(), Error> {
+        let socket = TcpListener::bind(&WORKER_SOCKET_ADDRESS).await?;
+        info!("Listening for worker");
+
+        // TODO: Spawn worker (needs to happen concurrently with await above)
+
+        tokio::spawn(async move {
+            let mut socket = socket;
+
+            loop {
+                info!("Attempting to connect to worker");
+                let mut connection = match WorkerConnection::open(&mut socket).await {
+                    Ok(connection) => connection,
+                    Err(err) => {
+                        error!("Error connecting to worker: {err}");
+                        sleep(Duration::from_secs(2)).await;
+                        continue;
+                    }
+                };
+
+                info!("Worker connection established");
+
+                // Store connection so it's accessible on Controller
+                let mut connection_lock = self.worker_connection.lock().await;
+                *connection_lock = Some(connection.clone());
+
+                // Make sure connection stays available
+                connection.subscribe_for_disconnect().await;
+                // Loop again and attempt to reconnect
+            }
+        });
+
+        Ok(())
+    }
+
+    async fn start_cli_listener(&self, shutdown_token: CancellationToken) -> Result<(), Error> {
+        let control_socket = TcpListener::bind(&CONTROL_SOCKET_ADDRESS).await?;
+        info!("Listening for CLI");
+
+        loop {
+            match control_socket.accept().await {
+                Ok((mut stream, _)) => {
+                    info!("Accepted new client connection");
+                    let controller_clone = self.clone();
+                    let shutdown_token_clone = shutdown_token.clone();
+                    tokio::spawn(async move {
+                        match controller_clone
+                            .handle_command(&mut stream, shutdown_token_clone)
+                            .await
+                        {
+                            Ok(response) => match response.encode() {
+                                Ok(data) => {
+                                    let _ = stream.write_all(&data).await;
+                                    let _ = stream.shutdown().await;
+                                }
+                                Err(err) => error!("Error responding to client: {err:?}"),
+                            },
+                            Err(err) => error!("Error handling client: {err:?}"),
+                        }
+                    });
+                }
+                Err(e) => {
+                    error!("Error accepting control connection: {}", e);
+                }
+            }
+        }
     }
 
     async fn handle_command<T>(
@@ -91,7 +140,7 @@ impl Controller {
         stream.read_to_end(&mut buffer).await?;
 
         let (command, _) = CLICommand::decode(&buffer)?;
-        info!("Received RemoteCommand: {:?}", command);
+        info!("Received CLICommand: {:?}", command);
 
         let response = process_remote_command(command, self.registry.clone(), shutdown_token).await;
 

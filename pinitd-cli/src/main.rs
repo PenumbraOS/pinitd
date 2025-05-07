@@ -3,7 +3,7 @@ use std::process;
 use crate::error::Error;
 use clap::Parser;
 use pinitd_common::{
-    SOCKET_ADDRESS, ServiceStatus,
+    CONTROL_SOCKET_ADDRESS, ServiceStatus,
     bincode::Bincodable,
     protocol::{CLICommand, CLIResponse},
 };
@@ -59,7 +59,7 @@ async fn main() -> Result<(), Error> {
         Commands::Shutdown => CLICommand::Shutdown,
     };
 
-    let mut stream = match TcpStream::connect(SOCKET_ADDRESS).await {
+    let mut stream = match TcpStream::connect(CONTROL_SOCKET_ADDRESS).await {
         Ok(stream) => stream,
         Err(_) => exit_with_message("Cannot find pinitd. Is it running?"),
     };

@@ -7,7 +7,8 @@ use std::{
 pub mod bincode;
 pub mod protocol;
 
-pub const SOCKET_ADDRESS: &str = "127.0.0.1:1717";
+pub const CONTROL_SOCKET_ADDRESS: &str = "127.0.0.1:1717";
+pub const WORKER_SOCKET_ADDRESS: &str = "127.0.0.1:1718";
 
 #[cfg(target_os = "android")]
 pub const CONFIG_DIR: &str = "/data/local/tmp/jailbreak_units/";

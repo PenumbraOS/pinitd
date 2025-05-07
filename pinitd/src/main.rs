@@ -13,18 +13,16 @@ use error::Error;
 use log::LevelFilter;
 #[cfg(not(target_os = "android"))]
 use simple_logger::SimpleLogger;
-use worker::Worker;
+use worker::process::WorkerProcess;
 use zygote::extract_and_write_fd;
 
 mod controller;
 mod error;
-mod process;
 mod registry;
 mod state;
 mod types;
 mod unit;
 mod worker;
-mod worker_protocol;
 mod zygote;
 
 /// Custom init system for Ai Pin
@@ -74,7 +72,7 @@ async fn run() -> Result<(), Error> {
         Args::Worker(_) => {
             init_logging_with_tag(Some("pinitd-worker".into()));
             warn!("Starting worker");
-            Ok(Worker::create().await?)
+            Ok(WorkerProcess::create().await?)
         }
         Args::BuildPayload(_) => {
             init_logging_with_tag(None);
