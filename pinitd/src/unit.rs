@@ -4,7 +4,7 @@ use ini::Ini;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 
-use crate::error::Error;
+use crate::error::{Error, Result};
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub enum RestartPolicy {
@@ -49,7 +49,7 @@ pub struct ServiceConfig {
 }
 
 impl ServiceConfig {
-    pub async fn parse(path: &Path) -> Result<Self, Error> {
+    pub async fn parse(path: &Path) -> Result<Self> {
         let content = fs::read_to_string(path).await.or_else(|_| {
             Err(Error::Unknown(format!(
                 "Failed to read unit file {:?}",

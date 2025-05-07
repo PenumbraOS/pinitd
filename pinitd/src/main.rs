@@ -9,7 +9,7 @@ use ai_pin_logger::Config;
 use android_31317_exploit::exploit::{ExploitKind, payload};
 use clap::Parser;
 use controller::Controller;
-use error::Error;
+use error::Result;
 use log::LevelFilter;
 #[cfg(not(target_os = "android"))]
 use simple_logger::SimpleLogger;
@@ -55,7 +55,7 @@ async fn main() {
     }
 }
 
-async fn run() -> Result<(), Error> {
+async fn run() -> Result<()> {
     log_panics::init();
 
     #[cfg(target_os = "android")]
@@ -103,7 +103,7 @@ fn init_logging_with_tag(_tag: Option<String>) {
     let _ = SimpleLogger::new().init();
 }
 
-fn init_payload(executable: PathBuf) -> Result<String, Error> {
+fn init_payload(executable: PathBuf) -> Result<String> {
     Ok(payload(
         2000,
         "/data/local/tmp/",

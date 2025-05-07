@@ -1,7 +1,7 @@
 use pinitd_common::{ServiceRunState, ServiceStatus};
 
 use crate::{
-    error::Error,
+    error::{Error, Result},
     unit::{ServiceConfig, UID},
     worker::{
         connection::WorkerConnection,
@@ -18,15 +18,15 @@ pub struct ControllerRegistry {
 
 // TODO: Need event loop on worker to send updates to registry state
 impl Registry for ControllerRegistry {
-    async fn service_names(&self) -> Result<Vec<String>, Error> {
+    async fn service_names(&self) -> Result<Vec<String>> {
         self.local.service_names().await
     }
 
-    async fn service_can_autostart(&self, name: String) -> Result<bool, Error> {
+    async fn service_can_autostart(&self, name: String) -> Result<bool> {
         self.local.service_can_autostart(name).await
     }
 
-    async fn insert_unit(&self, config: ServiceConfig, enabled: bool) -> Result<(), Error> {
+    async fn insert_unit(&self, config: ServiceConfig, enabled: bool) -> Result<()> {
         self.local.insert_unit(config.clone(), enabled).await?;
 
         if config.uid == UID::System {
@@ -38,7 +38,7 @@ impl Registry for ControllerRegistry {
         Ok(())
     }
 
-    async fn remove_unit(&self, name: String) -> Result<bool, Error> {
+    async fn remove_unit(&self, name: String) -> Result<bool> {
         let removed_local = self.local.remove_unit(name.clone()).await?;
 
         if removed_local && !self.local.is_shell_service(&name).await? {
@@ -52,7 +52,7 @@ impl Registry for ControllerRegistry {
         }
     }
 
-    async fn service_start(&self, name: String) -> Result<bool, Error> {
+    async fn service_start(&self, name: String) -> Result<bool> {
         let allow_start = self
             .local
             .with_service(&name, |service| {
@@ -81,7 +81,7 @@ impl Registry for ControllerRegistry {
         }
     }
 
-    async fn service_stop(&self, name: String) -> Result<(), Error> {
+    async fn service_stop(&self, name: String) -> Result<()> {
         if self.local.is_shell_service(&name).await? {
             self.local.service_stop(name).await
         } else {
@@ -90,7 +90,7 @@ impl Registry for ControllerRegistry {
         }
     }
 
-    async fn service_restart(&self, name: String) -> Result<(), Error> {
+    async fn service_restart(&self, name: String) -> Result<()> {
         if self.local.is_shell_service(&name).await? {
             self.local.service_restart(name).await
         } else {
@@ -101,15 +101,15 @@ impl Registry for ControllerRegistry {
         }
     }
 
-    async fn service_enable(&self, name: String) -> Result<(), Error> {
+    async fn service_enable(&self, name: String) -> Result<()> {
         self.local.service_enable(name).await
     }
 
-    async fn service_disable(&self, name: String) -> Result<(), Error> {
+    async fn service_disable(&self, name: String) -> Result<()> {
         self.local.service_disable(name).await
     }
 
-    async fn service_reload(&self, name: String) -> Result<Option<ServiceConfig>, Error> {
+    async fn service_reload(&self, name: String) -> Result<Option<ServiceConfig>> {
         let result: Option<ServiceConfig> = self.local.service_reload(name.clone()).await?;
         if self.local.is_shell_service(&name).await? {
             if let Some(config) = &result {
@@ -122,15 +122,15 @@ impl Registry for ControllerRegistry {
         Ok(result)
     }
 
-    async fn service_status(&self, name: String) -> Result<ServiceStatus, Error> {
+    async fn service_status(&self, name: String) -> Result<ServiceStatus> {
         self.local.service_status(name).await
     }
 
-    async fn service_list_all(&self) -> Result<Vec<ServiceStatus>, Error> {
+    async fn service_list_all(&self) -> Result<Vec<ServiceStatus>> {
         self.local.service_list_all().await
     }
 
-    async fn shutdown(&self) -> Result<(), Error> {
+    async fn shutdown(&self) -> Result<()> {
         self.remote.write_command(WorkerCommand::Shutdown).await?;
         Ok(())
     }

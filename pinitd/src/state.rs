@@ -2,7 +2,7 @@ use pinitd_common::STATE_FILE;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 
-use crate::error::Error;
+use crate::error::{Error, Result};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct StoredState {
@@ -19,7 +19,7 @@ impl StoredState {
         }
     }
 
-    pub async fn load() -> Result<Self, Error> {
+    pub async fn load() -> Result<Self> {
         match fs::read_to_string(STATE_FILE).await {
             Ok(content) => Ok(serde_json::from_str(&content)?),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -36,7 +36,7 @@ impl StoredState {
         }
     }
 
-    pub async fn save(self) -> Result<(), Error> {
+    pub async fn save(self) -> Result<()> {
         if self.is_dummy {
             return Ok(());
         }

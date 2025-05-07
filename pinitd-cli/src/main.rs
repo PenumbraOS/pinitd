@@ -1,6 +1,6 @@
 use std::process;
 
-use crate::error::Error;
+use crate::error::Result;
 use clap::Parser;
 use pinitd_common::{
     CONTROL_SOCKET_ADDRESS, ServiceStatus,
@@ -44,7 +44,7 @@ enum Commands {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Error> {
+async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     let initd_command = match cli.command {

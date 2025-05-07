@@ -4,7 +4,10 @@ use pinitd_common::{ServiceRunState, bincode::Bincodable};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::{error::Error, unit::ServiceConfig};
+use crate::{
+    error::{Error, Result},
+    unit::ServiceConfig,
+};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum WorkerCommand {
@@ -34,7 +37,7 @@ where
     Self: Bincodable<'a>,
     S: AsyncReadExt + Unpin,
 {
-    async fn read(stream: &mut S) -> Result<Self, Error> {
+    async fn read(stream: &mut S) -> Result<Self> {
         let mut len_bytes = [0; std::mem::size_of::<u64>()];
 
         match stream.read_exact(&mut len_bytes).await {
@@ -58,7 +61,7 @@ where
     Self: Bincodable<'a>,
     S: AsyncWriteExt + Unpin,
 {
-    async fn write(self, stream: &mut S) -> Result<(), Error> {
+    async fn write(self, stream: &mut S) -> Result<()> {
         let buffer = self.encode()?;
 
         let len_bytes = (buffer.len() as u64).to_le_bytes();

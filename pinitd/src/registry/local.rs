@@ -13,7 +13,7 @@ use tokio::{
 };
 
 use crate::{
-    error::Error,
+    error::{Error, Result},
     state::StoredState,
     types::Service,
     unit::{RestartPolicy, ServiceConfig, UID},
@@ -30,7 +30,7 @@ struct InnerServiceRegistry {
 pub struct LocalRegistry(Arc<Mutex<InnerServiceRegistry>>);
 
 impl LocalRegistry {
-    pub fn empty() -> Result<Self, Error> {
+    pub fn empty() -> Result<Self> {
         let inner = InnerServiceRegistry {
             stored_state: StoredState::dummy(),
             registry: HashMap::new(),
@@ -40,7 +40,7 @@ impl LocalRegistry {
         Ok(registry)
     }
 
-    pub async fn load() -> Result<Self, Error> {
+    pub async fn load() -> Result<Self> {
         let state = StoredState::load().await?;
         info!("Loaded enabled state for: {:?}", state.enabled_services);
 
@@ -73,27 +73,27 @@ impl LocalRegistry {
         Ok(registry)
     }
 
-    async fn with_registry<F, R>(&self, func: F) -> Result<R, Error>
+    async fn with_registry<F, R>(&self, func: F) -> Result<R>
     where
-        F: FnOnce(MutexGuard<'_, InnerServiceRegistry>) -> Result<R, Error>,
+        F: FnOnce(MutexGuard<'_, InnerServiceRegistry>) -> Result<R>,
     {
         self.with_registry_async(|registry| ready(func(registry)))
             .await
     }
 
-    async fn with_registry_async<F, R, FR>(&self, func: F) -> Result<R, Error>
+    async fn with_registry_async<F, R, FR>(&self, func: F) -> Result<R>
     where
         F: FnOnce(MutexGuard<'_, InnerServiceRegistry>) -> FR,
-        FR: IntoFuture<Output = Result<R, Error>>,
+        FR: IntoFuture<Output = Result<R>>,
     {
         let registry_lock = self.0.lock().await;
         let result = func(registry_lock).await?;
         Ok(result)
     }
 
-    pub async fn with_service<F, R>(&self, name: &str, func: F) -> Result<R, Error>
+    pub async fn with_service<F, R>(&self, name: &str, func: F) -> Result<R>
     where
-        F: FnOnce(&mut Service) -> Result<R, Error>,
+        F: FnOnce(&mut Service) -> Result<R>,
     {
         let mut registry_lock = self.0.lock().await;
         let service = registry_lock
@@ -104,7 +104,7 @@ impl LocalRegistry {
         Ok(result)
     }
 
-    async fn load_unit(&self, path: &Path) -> Result<Option<ServiceConfig>, Error> {
+    async fn load_unit(&self, path: &Path) -> Result<Option<ServiceConfig>> {
         match ServiceConfig::parse(path).await {
             Ok(config) => {
                 self.with_registry(|mut registry| {
@@ -134,7 +134,7 @@ impl LocalRegistry {
         }
     }
 
-    pub async fn is_shell_service(&self, name: &str) -> Result<bool, Error> {
+    pub async fn is_shell_service(&self, name: &str) -> Result<bool> {
         self.with_service(name, |service| Ok(service.config.uid == UID::Shell))
             .await
     }
@@ -181,7 +181,7 @@ impl LocalRegistry {
         })
     }
 
-    async fn perform_command(&self, name: String) -> Result<(i32, String), Error> {
+    async fn perform_command(&self, name: String) -> Result<(i32, String)> {
         let mut registry_lock = self.0.lock().await;
         let service = registry_lock
             .registry
@@ -288,14 +288,14 @@ impl LocalRegistry {
 }
 
 impl Registry for LocalRegistry {
-    async fn service_names(&self) -> Result<Vec<String>, Error> {
+    async fn service_names(&self) -> Result<Vec<String>> {
         self.with_registry(|registry| {
             Ok(registry.registry.keys().cloned().collect::<Vec<String>>())
         })
         .await
     }
 
-    async fn service_can_autostart(&self, name: String) -> Result<bool, Error> {
+    async fn service_can_autostart(&self, name: String) -> Result<bool> {
         self.with_service(&name, |service| {
             Ok(service.enabled
                 && service.config.autostart
@@ -304,7 +304,7 @@ impl Registry for LocalRegistry {
         .await
     }
 
-    async fn insert_unit(&self, config: ServiceConfig, enabled: bool) -> Result<(), Error> {
+    async fn insert_unit(&self, config: ServiceConfig, enabled: bool) -> Result<()> {
         self.with_registry(|mut registry| {
             create_and_insert_unit(&mut registry, config, enabled);
             Ok(())
@@ -312,7 +312,7 @@ impl Registry for LocalRegistry {
         .await
     }
 
-    async fn remove_unit(&self, name: String) -> Result<bool, Error> {
+    async fn remove_unit(&self, name: String) -> Result<bool> {
         self.service_stop(name.clone()).await?;
         self.with_registry(|mut registry| {
             let success = registry.registry.remove(&name).is_some();
@@ -321,7 +321,7 @@ impl Registry for LocalRegistry {
         .await
     }
 
-    async fn service_start(&self, name: String) -> Result<bool, Error> {
+    async fn service_start(&self, name: String) -> Result<bool> {
         let handle = self.spawn(name.clone());
 
         // Some time after start we should be able to acquire the lock to preserve this handle
@@ -333,7 +333,7 @@ impl Registry for LocalRegistry {
         .await
     }
 
-    async fn autostart_all(&self) -> Result<(), Error> {
+    async fn autostart_all(&self) -> Result<()> {
         // Build current list of registry in case it's mutated during iteration and to drop lock
         let service_names = self
             .with_registry(|registry| {
@@ -364,12 +364,12 @@ impl Registry for LocalRegistry {
         Ok(())
     }
 
-    async fn service_stop(&self, name: String) -> Result<(), Error> {
+    async fn service_stop(&self, name: String) -> Result<()> {
         self.with_service(&name, |service| Ok(service_stop_internal(&name, service)))
             .await
     }
 
-    async fn service_restart(&self, name: String) -> Result<(), Error> {
+    async fn service_restart(&self, name: String) -> Result<()> {
         info!("Restarting service \"{name}\"");
         self.service_stop(name.clone()).await?;
         self.service_start(name).await?;
@@ -377,7 +377,7 @@ impl Registry for LocalRegistry {
         Ok(())
     }
 
-    async fn service_enable(&self, name: String) -> Result<(), Error> {
+    async fn service_enable(&self, name: String) -> Result<()> {
         let should_save = self
             .with_service(&name, |service| {
                 if service.enabled {
@@ -415,7 +415,7 @@ impl Registry for LocalRegistry {
         Ok(())
     }
 
-    async fn service_disable(&self, name: String) -> Result<(), Error> {
+    async fn service_disable(&self, name: String) -> Result<()> {
         // TODO: Use disable_service
         let should_save = self
             .with_service(&name, |service| {
@@ -448,7 +448,7 @@ impl Registry for LocalRegistry {
         Ok(())
     }
 
-    async fn service_reload(&self, name: String) -> Result<Option<ServiceConfig>, Error> {
+    async fn service_reload(&self, name: String) -> Result<Option<ServiceConfig>> {
         let path = self
             .with_service(&name, |service| Ok(service.config.unit_file_path.clone()))
             .await?;
@@ -461,17 +461,17 @@ impl Registry for LocalRegistry {
         Ok(did_change)
     }
 
-    async fn service_status(&self, name: String) -> Result<ServiceStatus, Error> {
+    async fn service_status(&self, name: String) -> Result<ServiceStatus> {
         self.with_service(&name, |service| Ok(service.status()))
             .await
     }
 
-    async fn service_list_all(&self) -> Result<Vec<ServiceStatus>, Error> {
+    async fn service_list_all(&self) -> Result<Vec<ServiceStatus>> {
         self.with_registry(|registry| Ok(registry.registry.values().map(|s| s.status()).collect()))
             .await
     }
 
-    async fn shutdown(&self) -> Result<(), Error> {
+    async fn shutdown(&self) -> Result<()> {
         self.with_registry_async(|mut registry| {
             for (name, service) in &mut registry.registry {
                 service_stop_internal(name, service);

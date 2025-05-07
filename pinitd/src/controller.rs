@@ -17,7 +17,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    error::Error,
+    error::Result,
     registry::{Registry, local::LocalRegistry},
     worker::connection::WorkerConnection,
 };
@@ -29,7 +29,7 @@ pub struct Controller {
 }
 
 impl Controller {
-    pub async fn create() -> Result<(), Error> {
+    pub async fn create() -> Result<()> {
         create_core_directories();
 
         let registry = LocalRegistry::load().await?;
@@ -64,7 +64,7 @@ impl Controller {
         Ok(())
     }
 
-    async fn start_worker(self) -> Result<(), Error> {
+    async fn start_worker(self) -> Result<()> {
         let socket = TcpListener::bind(&WORKER_SOCKET_ADDRESS).await?;
         info!("Listening for worker");
 
@@ -99,7 +99,7 @@ impl Controller {
         Ok(())
     }
 
-    async fn start_cli_listener(&self, shutdown_token: CancellationToken) -> Result<(), Error> {
+    async fn start_cli_listener(&self, shutdown_token: CancellationToken) -> Result<()> {
         let control_socket = TcpListener::bind(&CONTROL_SOCKET_ADDRESS).await?;
         info!("Listening for CLI");
 
@@ -136,7 +136,7 @@ impl Controller {
         &self,
         stream: &mut T,
         shutdown_token: CancellationToken,
-    ) -> Result<CLIResponse, Error>
+    ) -> Result<CLIResponse>
     where
         T: AsyncRead + Unpin,
     {
@@ -152,7 +152,7 @@ impl Controller {
     }
 }
 
-fn setup_signal_watchers(shutdown_token: CancellationToken) -> Result<JoinHandle<()>, Error> {
+fn setup_signal_watchers(shutdown_token: CancellationToken) -> Result<JoinHandle<()>> {
     let mut sigterm = signal(SignalKind::terminate())?;
     let mut sigint = signal(SignalKind::interrupt())?;
 
@@ -225,7 +225,7 @@ async fn process_remote_command(
     }
 }
 
-async fn shutdown(registry: LocalRegistry) -> Result<(), Error> {
+async fn shutdown(registry: LocalRegistry) -> Result<()> {
     info!("Initiating daemon shutdown...");
     registry.shutdown().await?;
 

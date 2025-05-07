@@ -1,24 +1,24 @@
 use pinitd_common::ServiceStatus;
 
-use crate::{error::Error, unit::ServiceConfig};
+use crate::{error::Result, unit::ServiceConfig};
 
 pub mod controller;
 pub mod local;
 
 pub trait Registry {
-    async fn service_names(&self) -> Result<Vec<String>, Error>;
-    async fn service_can_autostart(&self, name: String) -> Result<bool, Error>;
+    async fn service_names(&self) -> Result<Vec<String>>;
+    async fn service_can_autostart(&self, name: String) -> Result<bool>;
 
-    async fn insert_unit(&self, config: ServiceConfig, enabled: bool) -> Result<(), Error>;
-    async fn remove_unit(&self, name: String) -> Result<bool, Error>;
+    async fn insert_unit(&self, config: ServiceConfig, enabled: bool) -> Result<()>;
+    async fn remove_unit(&self, name: String) -> Result<bool>;
 
     /// Attempts to start the registered service. Returns true if the service was successfully started and
     /// false if the service was already running
-    async fn service_start(&self, name: String) -> Result<bool, Error>;
-    async fn service_stop(&self, name: String) -> Result<(), Error>;
-    async fn service_restart(&self, name: String) -> Result<(), Error>;
+    async fn service_start(&self, name: String) -> Result<bool>;
+    async fn service_stop(&self, name: String) -> Result<()>;
+    async fn service_restart(&self, name: String) -> Result<()>;
 
-    async fn autostart_all(&self) -> Result<(), Error> {
+    async fn autostart_all(&self) -> Result<()> {
         // Build current list of registry in case it's mutated during iteration and to drop lock
         let service_names = self.service_names().await?;
 
@@ -38,13 +38,13 @@ pub trait Registry {
         Ok(())
     }
 
-    async fn service_enable(&self, name: String) -> Result<(), Error>;
-    async fn service_disable(&self, name: String) -> Result<(), Error>;
+    async fn service_enable(&self, name: String) -> Result<()>;
+    async fn service_disable(&self, name: String) -> Result<()>;
 
-    async fn service_reload(&self, name: String) -> Result<Option<ServiceConfig>, Error>;
+    async fn service_reload(&self, name: String) -> Result<Option<ServiceConfig>>;
 
-    async fn service_status(&self, name: String) -> Result<ServiceStatus, Error>;
-    async fn service_list_all(&self) -> Result<Vec<ServiceStatus>, Error>;
+    async fn service_status(&self, name: String) -> Result<ServiceStatus>;
+    async fn service_list_all(&self) -> Result<Vec<ServiceStatus>>;
 
-    async fn shutdown(&self) -> Result<(), Error>;
+    async fn shutdown(&self) -> Result<()>;
 }

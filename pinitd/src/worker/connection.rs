@@ -13,7 +13,7 @@ use tokio::{
     time::timeout,
 };
 
-use crate::error::Error;
+use crate::error::{Error, Result};
 
 use super::protocol::{WorkerCommand, WorkerRead, WorkerResponse, WorkerWrite};
 
@@ -64,7 +64,7 @@ impl Connection {
 }
 
 impl WorkerConnection {
-    pub async fn open(socket: &mut TcpListener) -> Result<Self, Error> {
+    pub async fn open(socket: &mut TcpListener) -> Result<Self> {
         let (stream, _) = socket.accept().await?;
         info!("Connected to worker");
 
@@ -73,7 +73,7 @@ impl WorkerConnection {
         })
     }
 
-    pub async fn write_command(&self, command: WorkerCommand) -> Result<WorkerResponse, Error> {
+    pub async fn write_command(&self, command: WorkerCommand) -> Result<WorkerResponse> {
         match timeout(Duration::from_millis(200), async move {
             let mut write = self.connection.write.lock().await;
             command
@@ -117,7 +117,7 @@ impl WorkerConnection {
 }
 
 impl ControllerConnection {
-    pub async fn open() -> Result<Self, Error> {
+    pub async fn open() -> Result<Self> {
         let stream = TcpStream::connect(WORKER_SOCKET_ADDRESS).await?;
         info!("Connected to controller");
 
@@ -126,7 +126,7 @@ impl ControllerConnection {
         })
     }
 
-    pub async fn read_command(&self) -> Result<WorkerCommand, Error> {
+    pub async fn read_command(&self) -> Result<WorkerCommand> {
         let mut read = self.connection.read.lock().await;
         match WorkerCommand::read(&mut *read).await {
             Ok(command) => Ok(command),
@@ -138,7 +138,7 @@ impl ControllerConnection {
         }
     }
 
-    pub async fn write_response(&self, response: WorkerResponse) -> Result<(), Error> {
+    pub async fn write_response(&self, response: WorkerResponse) -> Result<()> {
         let mut write = self.connection.write.lock().await;
         match response.write(&mut *write).await {
             Ok(_) => Ok(()),

@@ -5,9 +5,9 @@ use std::{
     os::fd::{FromRawFd, RawFd},
 };
 
-use crate::error::Error;
+use crate::error::{Error, Result};
 
-pub fn extract_and_write_fd() -> Result<(), Error> {
+pub fn extract_and_write_fd() -> Result<()> {
     let fd_str = extract_fd().ok_or(Error::Unknown("Could not find fd".into()))?;
     let fd: RawFd = fd_str.parse::<RawFd>()?;
 
