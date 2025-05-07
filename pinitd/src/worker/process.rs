@@ -1,17 +1,15 @@
 use std::collections::HashMap;
 
-use pinitd_common::{CONTROL_SOCKET_ADDRESS, bincode::Bincodable};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpStream,
-    select,
-};
+use tokio::select;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
     error::Error,
     registry::ServiceRegistry,
-    worker::protocol::{WorkerCommand, WorkerResponse},
+    worker::{
+        connection::ControllerConnection,
+        protocol::{WorkerCommand, WorkerResponse},
+    },
 };
 
 pub struct WorkerProcess;
@@ -19,28 +17,20 @@ pub struct WorkerProcess;
 impl WorkerProcess {
     pub async fn create() -> Result<(), Error> {
         info!("Connecting to controller");
-        let mut stream = TcpStream::connect(CONTROL_SOCKET_ADDRESS).await?;
-        info!("Controller connected");
 
         let mut registry = ServiceRegistry::empty()?;
         let token = CancellationToken::new();
 
-        loop {
-            let mut len_bytes = [0; std::mem::size_of::<u64>()];
+        let mut connection = ControllerConnection::open().await?;
+        info!("Controller connected");
 
+        loop {
             select! {
                 _ = token.cancelled() => {
 
                 }
-                result = stream.read_exact(&mut len_bytes) => match result {
-                    Ok(_) => {
-                        stream.read_exact(&mut len_bytes).await?;
-                        let len = u64::from_le_bytes(len_bytes);
-
-                        let mut buffer = vec![0; len as usize];
-                        stream.read_exact(&mut buffer).await?;
-
-                        let (command, _) = WorkerCommand::decode(&buffer)?;
+                result = connection.read_command() => match result {
+                    Ok(command) => {
                         info!("Received command {command:?}");
 
                         let response = match handle_command(command, &mut registry, &token).await {
@@ -52,15 +42,13 @@ impl WorkerProcess {
                             }
                         };
 
-                        match response.encode() {
-                            Ok(data) => {
-                                let _ = stream.write_all(&data).await;
-                                let _ = stream.shutdown().await;
-                            }
-                            Err(err) => error!("Error responding to controller: {err:?}"),
-                        }
-                    },
-                    Err(err) => error!("Error reading from controller: {err:?}"),
+                        connection.write_response(response).await?;
+                    }
+                    Err(err) => {
+                        error!("Error processing command packet: {err}");
+                        info!("Reconnecting to controller");
+                        connection = ControllerConnection::open().await?;
+                    }
                 }
             }
         }
@@ -96,7 +84,7 @@ async fn handle_command(
             return Ok(WorkerResponse::Status(HashMap::from_iter(status_iter)));
         }
         WorkerCommand::Shutdown => {
-            registry.shutdown();
+            let _ = registry.shutdown().await;
             // Trigger process shutdown
             token.cancel();
             return Ok(WorkerResponse::ShuttingDown);

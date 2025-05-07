@@ -14,7 +14,7 @@ use tokio::{
 
 use crate::error::Error;
 
-use super::protocol::{WorkerCommand, WorkerRead, WorkerWrite};
+use super::protocol::{WorkerCommand, WorkerRead, WorkerResponse, WorkerWrite};
 
 /// Connection held by Controller to transfer data to/from Worker
 #[derive(Clone)]
@@ -54,11 +54,11 @@ impl Connection {
     }
 
     async fn subscribe_for_disconnect(&mut self) {
-        self.health_rx.wait_for(|value| !*value).await;
+        let _ = self.health_rx.wait_for(|value| !*value).await;
     }
 
     fn mark_disconnected(&self) {
-        self.health_tx.send(false);
+        let _ = self.health_tx.send(false);
     }
 }
 
@@ -107,6 +107,18 @@ impl ControllerConnection {
         let mut read = self.connection.read.lock().await;
         match WorkerCommand::read(&mut *read).await {
             Ok(command) => Ok(command),
+            Err(err) => {
+                // Any error immediately closes the connection
+                self.connection.mark_disconnected();
+                Err(err)
+            }
+        }
+    }
+
+    pub async fn write_response(&self, response: WorkerResponse) -> Result<(), Error> {
+        let mut write = self.connection.write.lock().await;
+        match response.write(&mut *write).await {
+            Ok(_) => Ok(()),
             Err(err) => {
                 // Any error immediately closes the connection
                 self.connection.mark_disconnected();

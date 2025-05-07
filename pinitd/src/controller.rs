@@ -29,15 +29,15 @@ impl Controller {
         create_core_directories();
 
         let registry = ServiceRegistry::load().await?;
-        registry.autostart_all().await?;
 
         let controller = Controller {
             registry,
             worker_connection: Arc::new(Mutex::new(None)),
         };
 
-        let worker_controller = controller.clone();
-        worker_controller.start_worker().await?;
+        controller.clone().start_worker().await?;
+
+        controller.registry.autostart_all().await?;
 
         let shutdown_token = CancellationToken::new();
         let shutdown_signal = setup_signal_watchers(shutdown_token.clone())?;
