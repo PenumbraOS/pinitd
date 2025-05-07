@@ -18,7 +18,7 @@ pub enum WorkerCommand {
     Shutdown,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub enum WorkerResponse {
     Success,
     Error(String),

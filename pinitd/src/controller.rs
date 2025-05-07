@@ -16,11 +16,15 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::{error::Error, registry::ServiceRegistry, worker::connection::WorkerConnection};
+use crate::{
+    error::Error,
+    registry::{Registry, local::LocalRegistry},
+    worker::connection::WorkerConnection,
+};
 
 #[derive(Clone)]
 pub struct Controller {
-    registry: ServiceRegistry,
+    registry: LocalRegistry,
     worker_connection: Arc<Mutex<Option<WorkerConnection>>>,
 }
 
@@ -28,7 +32,7 @@ impl Controller {
     pub async fn create() -> Result<(), Error> {
         create_core_directories();
 
-        let registry = ServiceRegistry::load().await?;
+        let registry = LocalRegistry::load().await?;
 
         let controller = Controller {
             registry,
@@ -171,7 +175,7 @@ fn setup_signal_watchers(shutdown_token: CancellationToken) -> Result<JoinHandle
 
 async fn process_remote_command(
     command: CLICommand,
-    registry: ServiceRegistry,
+    registry: LocalRegistry,
     shutdown_token: CancellationToken,
 ) -> CLIResponse {
     match command {
@@ -221,7 +225,7 @@ async fn process_remote_command(
     }
 }
 
-async fn shutdown(registry: ServiceRegistry) -> Result<(), Error> {
+async fn shutdown(registry: LocalRegistry) -> Result<(), Error> {
     info!("Initiating daemon shutdown...");
     registry.shutdown().await?;
 

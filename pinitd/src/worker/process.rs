@@ -5,7 +5,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     error::Error,
-    registry::ServiceRegistry,
+    registry::{Registry, local::LocalRegistry},
     worker::{
         connection::ControllerConnection,
         protocol::{WorkerCommand, WorkerResponse},
@@ -18,7 +18,7 @@ impl WorkerProcess {
     pub async fn create() -> Result<(), Error> {
         info!("Connecting to controller");
 
-        let mut registry = ServiceRegistry::empty()?;
+        let mut registry = LocalRegistry::empty()?;
         let token = CancellationToken::new();
 
         let mut connection = ControllerConnection::open().await?;
@@ -57,7 +57,7 @@ impl WorkerProcess {
 
 async fn handle_command(
     command: WorkerCommand,
-    registry: &mut ServiceRegistry,
+    registry: &mut LocalRegistry,
     token: &CancellationToken,
 ) -> Result<WorkerResponse, Error> {
     match command {

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use pinitd_common::WORKER_SOCKET_ADDRESS;
 use tokio::{
@@ -10,6 +10,7 @@ use tokio::{
         Mutex,
         watch::{self, Receiver, Sender},
     },
+    time::timeout,
 };
 
 use crate::error::Error;
@@ -72,14 +73,36 @@ impl WorkerConnection {
         })
     }
 
-    pub async fn write_command(&self, command: WorkerCommand) -> Result<(), Error> {
-        let mut write = self.connection.write.lock().await;
-        match command.write(&mut *write).await {
-            Ok(_) => Ok(()),
-            Err(err) => {
+    pub async fn write_command(&self, command: WorkerCommand) -> Result<WorkerResponse, Error> {
+        match timeout(Duration::from_millis(200), async move {
+            let mut write = self.connection.write.lock().await;
+            command
+                .write(&mut *write)
+                .await
+                .map(|_| async {
+                    let mut read = self.connection.read.lock().await;
+                    WorkerResponse::read(&mut *read).await
+                })?
+                .await
+        })
+        .await
+        {
+            Ok(Ok(response)) => {
+                if let WorkerResponse::Error(err) = response {
+                    // Convert into local error
+                    Err(Error::WorkerProtocolError(err))
+                } else {
+                    Ok(response)
+                }
+            }
+            Ok(Err(err)) => {
                 // Any error immediately closes the connection
                 self.connection.mark_disconnected();
                 Err(err)
+            }
+            Err(err) => {
+                self.connection.mark_disconnected();
+                Err(err.into())
             }
         }
     }

@@ -16,8 +16,10 @@ use crate::{
     error::Error,
     state::StoredState,
     types::Service,
-    unit::{RestartPolicy, ServiceConfig},
+    unit::{RestartPolicy, ServiceConfig, UID},
 };
+
+use super::Registry;
 
 struct InnerServiceRegistry {
     stored_state: StoredState,
@@ -25,16 +27,16 @@ struct InnerServiceRegistry {
 }
 
 #[derive(Clone)]
-pub struct ServiceRegistry(Arc<Mutex<InnerServiceRegistry>>);
+pub struct LocalRegistry(Arc<Mutex<InnerServiceRegistry>>);
 
-impl ServiceRegistry {
+impl LocalRegistry {
     pub fn empty() -> Result<Self, Error> {
         let inner = InnerServiceRegistry {
             stored_state: StoredState::dummy(),
             registry: HashMap::new(),
         };
 
-        let registry = ServiceRegistry(Arc::new(Mutex::new(inner)));
+        let registry = LocalRegistry(Arc::new(Mutex::new(inner)));
         Ok(registry)
     }
 
@@ -52,7 +54,7 @@ impl ServiceRegistry {
             registry,
         };
 
-        let registry = ServiceRegistry(Arc::new(Mutex::new(inner)));
+        let registry = LocalRegistry(Arc::new(Mutex::new(inner)));
         let mut load_count = 0;
 
         while let Some(entry) = directory.next_entry().await? {
@@ -102,7 +104,7 @@ impl ServiceRegistry {
         Ok(result)
     }
 
-    async fn load_unit(&self, path: &Path) -> Result<bool, Error> {
+    async fn load_unit(&self, path: &Path) -> Result<Option<ServiceConfig>, Error> {
         match ServiceConfig::parse(path).await {
             Ok(config) => {
                 self.with_registry(|mut registry| {
@@ -113,14 +115,14 @@ impl ServiceRegistry {
 
                     if let Some(service) = service {
                         if config != service.config {
-                            service.config = config;
-                            Ok(true)
+                            service.config = config.clone();
+                            Ok(Some(config))
                         } else {
-                            Ok(false)
+                            Ok(None)
                         }
                     } else {
-                        create_and_insert_unit(&mut registry, config, enabled);
-                        Ok(true)
+                        create_and_insert_unit(&mut registry, config.clone(), enabled);
+                        Ok(Some(config))
                     }
                 })
                 .await
@@ -132,199 +134,9 @@ impl ServiceRegistry {
         }
     }
 
-    pub async fn insert_unit(&self, config: ServiceConfig, enabled: bool) -> Result<(), Error> {
-        self.with_registry(|mut registry| {
-            create_and_insert_unit(&mut registry, config, enabled);
-            Ok(())
-        })
-        .await
-    }
-
-    pub async fn remove_unit(&self, name: String) -> Result<(), Error> {
-        self.service_stop(name.clone()).await?;
-        self.with_registry(|mut registry| {
-            registry.registry.remove(&name);
-            Ok(())
-        })
-        .await
-    }
-
-    pub async fn service_start(&self, name: String) -> Result<bool, Error> {
-        let allow_start = self
-            .with_service(&name, |service| {
-                if !service.enabled {
-                    warn!("Attempted to start disabled service \"{name}\". Ignoring.",);
-                    return Err(Error::Unknown(format!("Service \"{name}\" is disabled.")));
-                }
-
-                Ok(!matches!(service.state, ServiceRunState::Running { .. }))
-            })
-            .await?;
-
-        if !allow_start {
-            // Already running
-            return Ok(false);
-        }
-
-        let handle = self.spawn(name.clone());
-
-        // Some time after start we should be able to acquire the lock to preserve this handle
-        self.with_service(&name, |service| {
-            service.monitor_task = Some(handle);
-
-            Ok(true)
-        })
-        .await
-    }
-
-    pub async fn autostart_all(&self) -> Result<(), Error> {
-        // Build current list of registry in case it's mutated during iteration and to drop lock
-        let service_names = self
-            .with_registry(|registry| {
-                Ok(registry.registry.keys().cloned().collect::<Vec<String>>())
-            })
-            .await?;
-
-        for name in service_names {
-            // Each iteration of the loop reacquires a lock
-            let should_start = self
-                .with_service(&name, |service| {
-                    Ok(service.enabled
-                        && service.config.autostart
-                        && service.state == ServiceRunState::Stopped)
-                })
-                .await?;
-
-            if !should_start {
-                continue;
-            }
-
-            info!("Autostarting service: {}", name);
-            let _ = self.service_start(name.clone()).await;
-        }
-
-        info!("Autostart sequence complete.");
-
-        Ok(())
-    }
-
-    pub async fn service_stop(&self, name: String) -> Result<(), Error> {
-        self.with_service(&name, |service| Ok(service_stop_internal(&name, service)))
+    pub async fn is_shell_service(&self, name: &str) -> Result<bool, Error> {
+        self.with_service(name, |service| Ok(service.config.uid == UID::Shell))
             .await
-    }
-
-    pub async fn service_restart(&self, name: String) -> Result<(), Error> {
-        info!("Restarting service \"{name}\"");
-        self.service_stop(name.clone()).await?;
-        self.service_start(name).await?;
-
-        Ok(())
-    }
-
-    pub async fn service_enable(&self, name: String) -> Result<(), Error> {
-        let should_save = self
-            .with_service(&name, |service| {
-                if service.enabled {
-                    warn!("Attempted to enable already enabled service \"{name}\"");
-                    return Ok(false);
-                }
-
-                service.enabled = true;
-                Ok(true)
-            })
-            .await?;
-
-        // TODO: Use enable_service
-        if should_save {
-            let state = self
-                .with_registry(|mut registry| {
-                    if !registry
-                        .stored_state
-                        .enabled_services
-                        .iter()
-                        .find(|s| **s == name)
-                        .is_some()
-                    {
-                        // Service is not already enabled
-                        registry.stored_state.enabled_services.push(name);
-                    }
-                    // Since it doesn't matter clone the state before saving for nicer async
-                    Ok(registry.stored_state.clone())
-                })
-                .await?;
-
-            state.save().await?;
-        }
-
-        Ok(())
-    }
-
-    pub async fn service_disable(&self, name: String) -> Result<(), Error> {
-        // TODO: Use disable_service
-        let should_save = self
-            .with_service(&name, |service| {
-                if !service.enabled {
-                    warn!("Attempted to disable already disabled service \"{name}\"");
-                    return Ok(false);
-                }
-
-                service.enabled = false;
-                Ok(true)
-            })
-            .await?;
-
-        if should_save {
-            self.with_registry_async(|mut registry| {
-                if let Some(i) = registry
-                    .stored_state
-                    .enabled_services
-                    .iter()
-                    .position(|s| *s == name)
-                {
-                    registry.stored_state.enabled_services.swap_remove(i);
-                }
-                // Since it doesn't matter clone the state before saving for nicer async
-                registry.stored_state.clone().save()
-            })
-            .await?;
-        }
-
-        Ok(())
-    }
-
-    pub async fn service_reload(&self, name: String) -> Result<(), Error> {
-        let path = self
-            .with_service(&name, |service| Ok(service.config.unit_file_path.clone()))
-            .await?;
-
-        let did_change = self.load_unit(&path).await?;
-        if did_change {
-            self.service_restart(name).await
-        } else {
-            Ok(())
-        }
-    }
-
-    pub async fn service_status(&self, name: String) -> Result<ServiceStatus, Error> {
-        self.with_service(&name, |service| Ok(service.status()))
-            .await
-    }
-
-    pub async fn service_list_all(&self) -> Result<Vec<ServiceStatus>, Error> {
-        self.with_registry(|registry| Ok(registry.registry.values().map(|s| s.status()).collect()))
-            .await
-    }
-
-    pub async fn shutdown(&self) -> Result<(), Error> {
-        self.with_registry_async(|mut registry| {
-            for (name, service) in &mut registry.registry {
-                service_stop_internal(name, service);
-            }
-
-            // Write last known state
-            registry.stored_state.clone().save()
-        })
-        .await
     }
 
     fn spawn(&self, name: String) -> JoinHandle<()> {
@@ -472,6 +284,203 @@ impl ServiceRegistry {
         })
         .await
         .map_or(false, |b| b)
+    }
+}
+
+impl Registry for LocalRegistry {
+    async fn service_names(&self) -> Result<Vec<String>, Error> {
+        self.with_registry(|registry| {
+            Ok(registry.registry.keys().cloned().collect::<Vec<String>>())
+        })
+        .await
+    }
+
+    async fn service_can_autostart(&self, name: String) -> Result<bool, Error> {
+        self.with_service(&name, |service| {
+            Ok(service.enabled
+                && service.config.autostart
+                && service.state == ServiceRunState::Stopped)
+        })
+        .await
+    }
+
+    async fn insert_unit(&self, config: ServiceConfig, enabled: bool) -> Result<(), Error> {
+        self.with_registry(|mut registry| {
+            create_and_insert_unit(&mut registry, config, enabled);
+            Ok(())
+        })
+        .await
+    }
+
+    async fn remove_unit(&self, name: String) -> Result<bool, Error> {
+        self.service_stop(name.clone()).await?;
+        self.with_registry(|mut registry| {
+            let success = registry.registry.remove(&name).is_some();
+            Ok(success)
+        })
+        .await
+    }
+
+    async fn service_start(&self, name: String) -> Result<bool, Error> {
+        let handle = self.spawn(name.clone());
+
+        // Some time after start we should be able to acquire the lock to preserve this handle
+        self.with_service(&name, |service| {
+            service.monitor_task = Some(handle);
+
+            Ok(true)
+        })
+        .await
+    }
+
+    async fn autostart_all(&self) -> Result<(), Error> {
+        // Build current list of registry in case it's mutated during iteration and to drop lock
+        let service_names = self
+            .with_registry(|registry| {
+                Ok(registry.registry.keys().cloned().collect::<Vec<String>>())
+            })
+            .await?;
+
+        for name in service_names {
+            // Each iteration of the loop reacquires a lock
+            let should_start = self
+                .with_service(&name, |service| {
+                    Ok(service.enabled
+                        && service.config.autostart
+                        && service.state == ServiceRunState::Stopped)
+                })
+                .await?;
+
+            if !should_start {
+                continue;
+            }
+
+            info!("Autostarting service: {}", name);
+            let _ = self.service_start(name.clone()).await;
+        }
+
+        info!("Autostart sequence complete.");
+
+        Ok(())
+    }
+
+    async fn service_stop(&self, name: String) -> Result<(), Error> {
+        self.with_service(&name, |service| Ok(service_stop_internal(&name, service)))
+            .await
+    }
+
+    async fn service_restart(&self, name: String) -> Result<(), Error> {
+        info!("Restarting service \"{name}\"");
+        self.service_stop(name.clone()).await?;
+        self.service_start(name).await?;
+
+        Ok(())
+    }
+
+    async fn service_enable(&self, name: String) -> Result<(), Error> {
+        let should_save = self
+            .with_service(&name, |service| {
+                if service.enabled {
+                    warn!("Attempted to enable already enabled service \"{name}\"");
+                    return Ok(false);
+                }
+
+                service.enabled = true;
+                Ok(true)
+            })
+            .await?;
+
+        // TODO: Use enable_service
+        if should_save {
+            let state = self
+                .with_registry(|mut registry| {
+                    if !registry
+                        .stored_state
+                        .enabled_services
+                        .iter()
+                        .find(|s| **s == name)
+                        .is_some()
+                    {
+                        // Service is not already enabled
+                        registry.stored_state.enabled_services.push(name);
+                    }
+                    // Since it doesn't matter clone the state before saving for nicer async
+                    Ok(registry.stored_state.clone())
+                })
+                .await?;
+
+            state.save().await?;
+        }
+
+        Ok(())
+    }
+
+    async fn service_disable(&self, name: String) -> Result<(), Error> {
+        // TODO: Use disable_service
+        let should_save = self
+            .with_service(&name, |service| {
+                if !service.enabled {
+                    warn!("Attempted to disable already disabled service \"{name}\"");
+                    return Ok(false);
+                }
+
+                service.enabled = false;
+                Ok(true)
+            })
+            .await?;
+
+        if should_save {
+            self.with_registry_async(|mut registry| {
+                if let Some(i) = registry
+                    .stored_state
+                    .enabled_services
+                    .iter()
+                    .position(|s| *s == name)
+                {
+                    registry.stored_state.enabled_services.swap_remove(i);
+                }
+                // Since it doesn't matter clone the state before saving for nicer async
+                registry.stored_state.clone().save()
+            })
+            .await?;
+        }
+
+        Ok(())
+    }
+
+    async fn service_reload(&self, name: String) -> Result<Option<ServiceConfig>, Error> {
+        let path = self
+            .with_service(&name, |service| Ok(service.config.unit_file_path.clone()))
+            .await?;
+
+        let did_change = self.load_unit(&path).await?;
+        if did_change.is_some() {
+            self.service_restart(name).await?;
+        }
+
+        Ok(did_change)
+    }
+
+    async fn service_status(&self, name: String) -> Result<ServiceStatus, Error> {
+        self.with_service(&name, |service| Ok(service.status()))
+            .await
+    }
+
+    async fn service_list_all(&self) -> Result<Vec<ServiceStatus>, Error> {
+        self.with_registry(|registry| Ok(registry.registry.values().map(|s| s.status()).collect()))
+            .await
+    }
+
+    async fn shutdown(&self) -> Result<(), Error> {
+        self.with_registry_async(|mut registry| {
+            for (name, service) in &mut registry.registry {
+                service_stop_internal(name, service);
+            }
+
+            // Write last known state
+            registry.stored_state.clone().save()
+        })
+        .await
     }
 }
 
