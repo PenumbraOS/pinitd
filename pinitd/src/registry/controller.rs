@@ -56,12 +56,12 @@ impl Registry for ControllerRegistry {
         let allow_start = self
             .local
             .with_service(&name, |service| {
-                if !service.enabled {
+                if !service.enabled() {
                     warn!("Attempted to start disabled service \"{name}\". Ignoring.",);
                     return Err(Error::Unknown(format!("Service \"{name}\" is disabled.")));
                 }
 
-                Ok(!matches!(service.state, ServiceRunState::Running { .. }))
+                Ok(!matches!(service.state(), ServiceRunState::Running { .. }))
             })
             .await?;
 

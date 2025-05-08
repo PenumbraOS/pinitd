@@ -18,11 +18,11 @@ impl WorkerProcess {
     pub async fn create() -> Result<()> {
         info!("Connecting to controller");
 
-        let mut registry = LocalRegistry::empty()?;
-        let token = CancellationToken::new();
-
         let mut connection = ControllerConnection::open().await?;
         info!("Controller connected");
+
+        let mut registry = LocalRegistry::worker(connection.clone())?;
+        let token = CancellationToken::new();
 
         loop {
             select! {

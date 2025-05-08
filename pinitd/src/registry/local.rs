@@ -15,8 +15,9 @@ use tokio::{
 use crate::{
     error::{Error, Result},
     state::StoredState,
-    types::Service,
+    types::{Service, SyncedService},
     unit::{RestartPolicy, ServiceConfig, UID},
+    worker::connection::ControllerConnection,
 };
 
 use super::Registry;
@@ -24,16 +25,18 @@ use super::Registry;
 struct InnerServiceRegistry {
     stored_state: StoredState,
     registry: HashMap<String, Service>,
+    controller_connection: Option<ControllerConnection>,
 }
 
 #[derive(Clone)]
 pub struct LocalRegistry(Arc<Mutex<InnerServiceRegistry>>);
 
 impl LocalRegistry {
-    pub fn empty() -> Result<Self> {
+    pub fn worker(connection: ControllerConnection) -> Result<Self> {
         let inner = InnerServiceRegistry {
             stored_state: StoredState::dummy(),
             registry: HashMap::new(),
+            controller_connection: Some(connection),
         };
 
         let registry = LocalRegistry(Arc::new(Mutex::new(inner)));
@@ -52,6 +55,7 @@ impl LocalRegistry {
         let inner = InnerServiceRegistry {
             stored_state: state,
             registry,
+            controller_connection: None,
         };
 
         let registry = LocalRegistry(Arc::new(Mutex::new(inner)));
@@ -93,14 +97,30 @@ impl LocalRegistry {
 
     pub async fn with_service<F, R>(&self, name: &str, func: F) -> Result<R>
     where
-        F: FnOnce(&mut Service) -> Result<R>,
+        F: FnOnce(&Service) -> Result<R>,
+    {
+        let registry_lock = self.0.lock().await;
+        let service = registry_lock
+            .registry
+            .get(name)
+            .ok_or_else(|| Error::UnknownServiceError(name.to_string()))?;
+        let result = func(service)?;
+        Ok(result)
+    }
+
+    pub async fn with_service_mut<F, R>(&self, name: &str, func: F) -> Result<R>
+    where
+        F: FnOnce(&mut SyncedService) -> Result<R>,
     {
         let mut registry_lock = self.0.lock().await;
+        let connection = registry_lock.controller_connection.clone();
         let service = registry_lock
             .registry
             .get_mut(name)
             .ok_or_else(|| Error::UnknownServiceError(name.to_string()))?;
-        let result = func(service)?;
+        let mut service = SyncedService::from(service, connection);
+        let result = func(&mut service)?;
+        service.send_update_if_necessary().await?;
         Ok(result)
     }
 
@@ -114,8 +134,9 @@ impl LocalRegistry {
                     info!("Loaded config: {name} (Enabled: {enabled})");
 
                     if let Some(service) = service {
-                        if config != service.config {
-                            service.config = config.clone();
+                        let mut service = SyncedService::from(service, None);
+                        if config != *service.config() {
+                            service.set_config(config.clone());
                             Ok(Some(config))
                         } else {
                             Ok(None)
@@ -135,7 +156,7 @@ impl LocalRegistry {
     }
 
     pub async fn is_shell_service(&self, name: &str) -> Result<bool> {
-        self.with_service(name, |service| Ok(service.config.uid == UID::Shell))
+        self.with_service(name, |service| Ok(service.config().uid == UID::Shell))
             .await
     }
 
@@ -151,7 +172,7 @@ impl LocalRegistry {
                     let mut expected_stop = false;
 
                     if let Ok(state) = inner_registry
-                        .with_service(&inner_name, |service| Ok(service.state.clone()))
+                        .with_service(&inner_name, |service| Ok(service.state().clone()))
                         .await
                     {
                         // If we were in stopping, we expected the process to close. Don't mark it a failure
@@ -182,13 +203,9 @@ impl LocalRegistry {
     }
 
     async fn perform_command(&self, name: String) -> Result<(i32, String)> {
-        let mut registry_lock = self.0.lock().await;
-        let service = registry_lock
-            .registry
-            .get_mut(&name)
-            .ok_or_else(|| Error::Unknown(format!("Service \"{name}\" not found in registry")))?;
-
-        let config = &service.config;
+        let config = self
+            .with_service(&name, |service| Ok(service.config().clone()))
+            .await?;
 
         info!("Spawning process for {name}: {}", config.command);
 
@@ -208,10 +225,11 @@ impl LocalRegistry {
                 })? as i32;
                 info!("Service \"{name}\" spawned successfully with PID: {pid}",);
 
-                service.state = ServiceRunState::Running { pid };
-
-                // Drop contended resources before awaiting process
-                drop(registry_lock);
+                self.with_service_mut(&name, |service| {
+                    service.set_state(ServiceRunState::Running { pid });
+                    Ok(())
+                })
+                .await?;
 
                 info!("Monitoring task started for service \"{name}\"");
                 let (exit_code, exit_message) = match child.wait().await {
@@ -235,9 +253,13 @@ impl LocalRegistry {
             Err(err) => {
                 let error_msg = format!("Failed to spawn process for \"{name}\": {err}");
                 error!("{}", error_msg);
-                service.state = ServiceRunState::Failed {
-                    reason: error_msg.clone(),
-                };
+                self.with_service_mut(&name, |service| {
+                    service.set_state(ServiceRunState::Failed {
+                        reason: error_msg.clone(),
+                    });
+                    Ok(())
+                })
+                .await?;
                 Err(Error::Unknown(error_msg))
             }
         }
@@ -250,17 +272,17 @@ impl LocalRegistry {
         expected_stop: bool,
         exit_message: String,
     ) -> bool {
-        self.with_service(&name, |service| {
+        self.with_service_mut(&name, |service| {
             if did_fail && !expected_stop {
                 warn!(
                     "Service \"{name}\" transitioned to Failed state with message {exit_message}"
                 );
-                service.state = ServiceRunState::Failed {
+                service.set_state(ServiceRunState::Failed {
                     reason: exit_message.clone(),
-                };
+                });
             } else {
                 info!("Service \"{name}\" transitioned to Stopped state");
-                service.state = ServiceRunState::Stopped;
+                service.set_state(ServiceRunState::Stopped);
             }
 
             if expected_stop {
@@ -268,13 +290,13 @@ impl LocalRegistry {
                 return Ok(false);
             }
 
-            let should_restart = service.config.restart == RestartPolicy::Always
-                || (did_fail && service.config.restart == RestartPolicy::OnFailure);
-            if service.enabled && should_restart {
+            let should_restart = service.config().restart == RestartPolicy::Always
+                || (did_fail && service.config().restart == RestartPolicy::OnFailure);
+            if service.enabled() && should_restart {
                 warn!("Restarting service \"{name}\" due to exit: {exit_message}");
 
                 return Ok(true);
-            } else if !service.enabled {
+            } else if !service.enabled() {
                 info!("Service \"{name}\" exited but is disabled, not restarting");
             } else {
                 info!("Service \"{name}\" exited and restart is not configured");
@@ -297,9 +319,9 @@ impl Registry for LocalRegistry {
 
     async fn service_can_autostart(&self, name: String) -> Result<bool> {
         self.with_service(&name, |service| {
-            Ok(service.enabled
-                && service.config.autostart
-                && service.state == ServiceRunState::Stopped)
+            Ok(service.enabled()
+                && service.config().autostart
+                && *service.state() == ServiceRunState::Stopped)
         })
         .await
     }
@@ -325,47 +347,16 @@ impl Registry for LocalRegistry {
         let handle = self.spawn(name.clone());
 
         // Some time after start we should be able to acquire the lock to preserve this handle
-        self.with_service(&name, |service| {
-            service.monitor_task = Some(handle);
+        self.with_service_mut(&name, |service| {
+            service.set_monitor_task(Some(handle));
 
             Ok(true)
         })
         .await
     }
 
-    async fn autostart_all(&self) -> Result<()> {
-        // Build current list of registry in case it's mutated during iteration and to drop lock
-        let service_names = self
-            .with_registry(|registry| {
-                Ok(registry.registry.keys().cloned().collect::<Vec<String>>())
-            })
-            .await?;
-
-        for name in service_names {
-            // Each iteration of the loop reacquires a lock
-            let should_start = self
-                .with_service(&name, |service| {
-                    Ok(service.enabled
-                        && service.config.autostart
-                        && service.state == ServiceRunState::Stopped)
-                })
-                .await?;
-
-            if !should_start {
-                continue;
-            }
-
-            info!("Autostarting service: {}", name);
-            let _ = self.service_start(name.clone()).await;
-        }
-
-        info!("Autostart sequence complete.");
-
-        Ok(())
-    }
-
     async fn service_stop(&self, name: String) -> Result<()> {
-        self.with_service(&name, |service| Ok(service_stop_internal(&name, service)))
+        self.with_service_mut(&name, |service| Ok(service_stop_internal(&name, service)))
             .await
     }
 
@@ -379,13 +370,13 @@ impl Registry for LocalRegistry {
 
     async fn service_enable(&self, name: String) -> Result<()> {
         let should_save = self
-            .with_service(&name, |service| {
-                if service.enabled {
+            .with_service_mut(&name, |service| {
+                if service.enabled() {
                     warn!("Attempted to enable already enabled service \"{name}\"");
                     return Ok(false);
                 }
 
-                service.enabled = true;
+                service.set_enabled(true);
                 Ok(true)
             })
             .await?;
@@ -418,13 +409,13 @@ impl Registry for LocalRegistry {
     async fn service_disable(&self, name: String) -> Result<()> {
         // TODO: Use disable_service
         let should_save = self
-            .with_service(&name, |service| {
-                if !service.enabled {
+            .with_service_mut(&name, |service| {
+                if !service.enabled() {
                     warn!("Attempted to disable already disabled service \"{name}\"");
                     return Ok(false);
                 }
 
-                service.enabled = false;
+                service.set_enabled(false);
                 Ok(true)
             })
             .await?;
@@ -450,7 +441,7 @@ impl Registry for LocalRegistry {
 
     async fn service_reload(&self, name: String) -> Result<Option<ServiceConfig>> {
         let path = self
-            .with_service(&name, |service| Ok(service.config.unit_file_path.clone()))
+            .with_service(&name, |service| Ok(service.config().unit_file_path.clone()))
             .await?;
 
         let did_change = self.load_unit(&path).await?;
@@ -474,7 +465,9 @@ impl Registry for LocalRegistry {
     async fn shutdown(&self) -> Result<()> {
         self.with_registry_async(|mut registry| {
             for (name, service) in &mut registry.registry {
-                service_stop_internal(name, service);
+                // We don't need to send anything at shutdown
+                let mut service = SyncedService::from(service, None);
+                service_stop_internal(name, &mut service);
             }
 
             // Write last known state
@@ -484,12 +477,12 @@ impl Registry for LocalRegistry {
     }
 }
 
-fn service_stop_internal(name: &str, service: &mut Service) {
-    match &service.state {
+fn service_stop_internal(name: &str, service: &mut SyncedService) {
+    match &service.state() {
         ServiceRunState::Running { pid } => {
             let pid = pid.clone();
             // Transition to stopping to mark this as an intentional service stop
-            service.state = ServiceRunState::Stopping;
+            service.set_state(ServiceRunState::Stopping);
 
             info!("Attempting to stop service \"{name}\" (pid: {pid}). Sending SIGTERM");
             let result = unsafe { kill(pid, SIGTERM) };
@@ -497,11 +490,11 @@ fn service_stop_internal(name: &str, service: &mut Service) {
                 warn!("Failed to send SIGTERM to pid {pid}: result {result}");
             }
             // If we have a handle, attempt to kill via handle
-            if let Some(handle) = &service.monitor_task {
+            if let Some(handle) = service.monitor_task() {
                 handle.abort();
             }
             // Make sure handle drops
-            service.monitor_task = None;
+            service.set_monitor_task(None);
         }
         _ => {
             warn!("Service \"{name}\" is not running");
@@ -515,12 +508,7 @@ fn create_and_insert_unit(
     enabled: bool,
 ) {
     let name = config.name.clone();
-    let runtime = Service {
-        config,
-        state: ServiceRunState::Stopped,
-        enabled,
-        monitor_task: None,
-    };
+    let runtime = Service::new(config, ServiceRunState::Stopped, enabled);
 
     registry.registry.insert(name, runtime);
 }

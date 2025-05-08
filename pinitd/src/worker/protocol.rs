@@ -6,6 +6,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::{
     error::{Error, Result},
+    types::BaseService,
     unit::ServiceConfig,
 };
 
@@ -29,8 +30,11 @@ pub enum WorkerResponse {
     ShuttingDown,
 }
 
+pub type WorkerServiceUpdate = BaseService;
+
 impl Bincodable<'_> for WorkerCommand {}
 impl Bincodable<'_> for WorkerResponse {}
+impl Bincodable<'_> for WorkerServiceUpdate {}
 
 pub trait WorkerRead<'a, S>
 where
@@ -74,6 +78,8 @@ where
 
 impl<T> WorkerRead<'_, T> for WorkerCommand where T: AsyncReadExt + Unpin {}
 impl<T> WorkerRead<'_, T> for WorkerResponse where T: AsyncReadExt + Unpin {}
+impl<T> WorkerRead<'_, T> for WorkerServiceUpdate where T: AsyncReadExt + Unpin {}
 
 impl<T> WorkerWrite<'_, T> for WorkerCommand where T: AsyncWriteExt + Unpin {}
 impl<T> WorkerWrite<'_, T> for WorkerResponse where T: AsyncWriteExt + Unpin {}
+impl<T> WorkerWrite<'_, T> for WorkerServiceUpdate where T: AsyncWriteExt + Unpin {}

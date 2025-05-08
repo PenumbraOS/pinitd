@@ -15,7 +15,9 @@ use tokio::{
 
 use crate::error::{Error, Result};
 
-use super::protocol::{WorkerCommand, WorkerRead, WorkerResponse, WorkerWrite};
+use super::protocol::{
+    WorkerCommand, WorkerRead, WorkerResponse, WorkerServiceUpdate, WorkerWrite,
+};
 
 /// Connection held by Controller to transfer data to/from Worker
 #[derive(Clone)]
@@ -24,6 +26,7 @@ pub struct WorkerConnection {
 }
 
 /// Connection held by Worker to transfer data to/from Controller
+#[derive(Clone)]
 pub struct ControllerConnection {
     connection: Connection,
 }
@@ -141,6 +144,18 @@ impl ControllerConnection {
     pub async fn write_response(&self, response: WorkerResponse) -> Result<()> {
         let mut write = self.connection.write.lock().await;
         match response.write(&mut *write).await {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                // Any error immediately closes the connection
+                self.connection.mark_disconnected();
+                Err(err)
+            }
+        }
+    }
+
+    pub async fn write_service_update(&self, update: WorkerServiceUpdate) -> Result<()> {
+        let mut write = self.connection.write.lock().await;
+        match update.write(&mut *write).await {
             Ok(_) => Ok(()),
             Err(err) => {
                 // Any error immediately closes the connection
