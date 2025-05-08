@@ -19,7 +19,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     error::Result,
     registry::{Registry, local::LocalRegistry},
-    worker::connection::WorkerConnection,
+    worker::{connection::WorkerConnection, process::WorkerProcess},
 };
 
 #[derive(Clone)]
@@ -29,7 +29,7 @@ pub struct Controller {
 }
 
 impl Controller {
-    pub async fn create() -> Result<()> {
+    pub async fn specialize() -> Result<()> {
         create_core_directories();
 
         let registry = LocalRegistry::load().await?;
@@ -68,7 +68,10 @@ impl Controller {
         let socket = TcpListener::bind(&WORKER_SOCKET_ADDRESS).await?;
         info!("Listening for worker");
 
-        // TODO: Spawn worker (needs to happen concurrently with await above)
+        // TODO: Retry handling
+        info!("Spawning worker");
+        WorkerProcess::spawn().await?;
+        info!("Spawning worker sent");
 
         tokio::spawn(async move {
             let mut socket = socket;
@@ -146,7 +149,10 @@ impl Controller {
         let (command, _) = CLICommand::decode(&buffer)?;
         info!("Received CLICommand: {:?}", command);
 
-        let response = process_remote_command(command, self.registry.clone(), shutdown_token).await;
+        let response = self
+            .registry
+            .process_remote_command(command, shutdown_token)
+            .await;
 
         Ok(response)
     }
@@ -171,58 +177,6 @@ fn setup_signal_watchers(shutdown_token: CancellationToken) -> Result<JoinHandle
     });
 
     Ok(shutdown_signal_task)
-}
-
-async fn process_remote_command(
-    command: CLICommand,
-    registry: LocalRegistry,
-    shutdown_token: CancellationToken,
-) -> CLIResponse {
-    match command {
-        CLICommand::Start(name) => match registry.service_start(name.clone()).await {
-            Ok(did_start) => {
-                if did_start {
-                    CLIResponse::Success(format!("Service \"{name}\" started",))
-                } else {
-                    CLIResponse::Success(format!("Service \"{name}\" already running",))
-                }
-            }
-            Err(err) => CLIResponse::Error(format!("Failed to start service \"{name}\": {err}")),
-        },
-        CLICommand::Stop(name) => match registry.service_stop(name.clone()).await {
-            Ok(_) => CLIResponse::Success(format!("Service \"{name}\" stop initiated.")),
-            Err(err) => CLIResponse::Error(format!("Failed to stop service \"{name}\": {err}")),
-        },
-        CLICommand::Restart(name) => match registry.service_restart(name.clone()).await {
-            Ok(_) => CLIResponse::Success(format!("Service \"{name}\" restarted")),
-            Err(err) => CLIResponse::Error(format!("Failed to restart service \"{name}\": {err}")),
-        },
-        CLICommand::Enable(name) => match registry.service_enable(name.clone()).await {
-            Ok(_) => CLIResponse::Success(format!("Service \"{name}\" enabled")),
-            Err(err) => CLIResponse::Error(format!("Failed to enable service \"{name}\": {err}")),
-        },
-        CLICommand::Disable(name) => match registry.service_disable(name.clone()).await {
-            Ok(_) => CLIResponse::Success(format!("Service \"{name}\" disabled")),
-            Err(err) => CLIResponse::Error(format!("Failed to disable service \"{name}\": {err}")),
-        },
-        CLICommand::Reload(name) => match registry.service_reload(name.clone()).await {
-            Ok(_) => CLIResponse::Success(format!("Service \"{name}\" reloaded")),
-            Err(err) => CLIResponse::Error(format!("Failed to reload service \"{name}\": {err}")),
-        },
-        CLICommand::Status(name) => match registry.service_status(name).await {
-            Ok(status) => CLIResponse::Status(status),
-            Err(err) => CLIResponse::Error(err.to_string()),
-        },
-        CLICommand::List => match registry.service_list_all().await {
-            Ok(list) => CLIResponse::List(list),
-            Err(err) => CLIResponse::Error(format!("Failed to retrieve service list: {err}")),
-        },
-        CLICommand::Shutdown => {
-            info!("Shutdown RemoteCommand received.");
-            shutdown_token.cancel();
-            CLIResponse::ShuttingDown // Respond immediately
-        }
-    }
 }
 
 async fn shutdown(registry: LocalRegistry) -> Result<()> {

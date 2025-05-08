@@ -16,7 +16,6 @@ pub struct ControllerRegistry {
     remote: WorkerConnection,
 }
 
-// TODO: Need event loop on worker to send updates to registry state
 impl Registry for ControllerRegistry {
     async fn service_names(&self) -> Result<Vec<String>> {
         self.local.service_names().await

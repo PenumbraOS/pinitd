@@ -15,7 +15,7 @@ use crate::{
 pub struct WorkerProcess;
 
 impl WorkerProcess {
-    pub async fn create() -> Result<()> {
+    pub async fn specialize() -> Result<()> {
         info!("Connecting to controller");
 
         let mut connection = ControllerConnection::open().await?;
@@ -52,6 +52,22 @@ impl WorkerProcess {
                 }
             }
         }
+    }
+
+    /// Spawn a remote process to act as the system worker
+    #[cfg(target_os = "android")]
+    pub async fn spawn() -> Result<()> {
+        unimplemented!()
+    }
+
+    /// Spawn a remote process to act as the system worker
+    #[cfg(not(target_os = "android"))]
+    pub async fn spawn() -> Result<()> {
+        let process_path = std::env::args().next().unwrap();
+        tokio::process::Command::new(process_path)
+            .arg("worker")
+            .spawn()?;
+        Ok(())
     }
 }
 

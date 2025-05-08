@@ -1,4 +1,8 @@
-use pinitd_common::ServiceStatus;
+use pinitd_common::{
+    ServiceStatus,
+    protocol::{CLICommand, CLIResponse},
+};
+use tokio_util::sync::CancellationToken;
 
 use crate::{error::Result, unit::ServiceConfig};
 
@@ -47,4 +51,66 @@ pub trait Registry {
     async fn service_list_all(&self) -> Result<Vec<ServiceStatus>>;
 
     async fn shutdown(&self) -> Result<()>;
+
+    async fn process_remote_command(
+        &self,
+        command: CLICommand,
+        shutdown_token: CancellationToken,
+    ) -> CLIResponse {
+        match command {
+            CLICommand::Start(name) => match self.service_start(name.clone()).await {
+                Ok(did_start) => {
+                    if did_start {
+                        CLIResponse::Success(format!("Service \"{name}\" started",))
+                    } else {
+                        CLIResponse::Success(format!("Service \"{name}\" already running",))
+                    }
+                }
+                Err(err) => {
+                    CLIResponse::Error(format!("Failed to start service \"{name}\": {err}"))
+                }
+            },
+            CLICommand::Stop(name) => match self.service_stop(name.clone()).await {
+                Ok(_) => CLIResponse::Success(format!("Service \"{name}\" stop initiated.")),
+                Err(err) => CLIResponse::Error(format!("Failed to stop service \"{name}\": {err}")),
+            },
+            CLICommand::Restart(name) => match self.service_restart(name.clone()).await {
+                Ok(_) => CLIResponse::Success(format!("Service \"{name}\" restarted")),
+                Err(err) => {
+                    CLIResponse::Error(format!("Failed to restart service \"{name}\": {err}"))
+                }
+            },
+            CLICommand::Enable(name) => match self.service_enable(name.clone()).await {
+                Ok(_) => CLIResponse::Success(format!("Service \"{name}\" enabled")),
+                Err(err) => {
+                    CLIResponse::Error(format!("Failed to enable service \"{name}\": {err}"))
+                }
+            },
+            CLICommand::Disable(name) => match self.service_disable(name.clone()).await {
+                Ok(_) => CLIResponse::Success(format!("Service \"{name}\" disabled")),
+                Err(err) => {
+                    CLIResponse::Error(format!("Failed to disable service \"{name}\": {err}"))
+                }
+            },
+            CLICommand::Reload(name) => match self.service_reload(name.clone()).await {
+                Ok(_) => CLIResponse::Success(format!("Service \"{name}\" reloaded")),
+                Err(err) => {
+                    CLIResponse::Error(format!("Failed to reload service \"{name}\": {err}"))
+                }
+            },
+            CLICommand::Status(name) => match self.service_status(name).await {
+                Ok(status) => CLIResponse::Status(status),
+                Err(err) => CLIResponse::Error(err.to_string()),
+            },
+            CLICommand::List => match self.service_list_all().await {
+                Ok(list) => CLIResponse::List(list),
+                Err(err) => CLIResponse::Error(format!("Failed to retrieve service list: {err}")),
+            },
+            CLICommand::Shutdown => {
+                info!("Shutdown RemoteCommand received.");
+                shutdown_token.cancel();
+                CLIResponse::ShuttingDown // Respond immediately
+            }
+        }
+    }
 }

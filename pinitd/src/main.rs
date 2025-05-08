@@ -67,12 +67,12 @@ async fn run() -> Result<()> {
         Args::Controller(_) => {
             init_logging_with_tag(Some("pinitd-controller".into()));
             warn!("Starting controller");
-            Ok(Controller::create().await?)
+            Ok(Controller::specialize().await?)
         }
         Args::Worker(_) => {
             init_logging_with_tag(Some("pinitd-worker".into()));
             warn!("Starting worker");
-            Ok(WorkerProcess::create().await?)
+            Ok(WorkerProcess::specialize().await?)
         }
         Args::BuildPayload(_) => {
             init_logging_with_tag(None);
