@@ -66,17 +66,17 @@ async fn run() -> Result<()> {
     match Args::try_parse()? {
         Args::Controller(_) => {
             init_logging_with_tag(Some("pinitd-controller".into()));
-            warn!("Starting controller");
+            info!("Specializing controller");
             Ok(Controller::specialize().await?)
         }
         Args::Worker(_) => {
             init_logging_with_tag(Some("pinitd-worker".into()));
-            warn!("Starting worker");
+            info!("Specializing worker");
             Ok(WorkerProcess::specialize().await?)
         }
         Args::BuildPayload(_) => {
             init_logging_with_tag(None);
-            warn!("Building init payload only");
+            info!("Building init payload only");
             let payload = init_payload("/data/local/tmp/pinitd".into())?;
             // Write to stdout
             print!("{payload}");

@@ -27,7 +27,8 @@ impl WorkerProcess {
         loop {
             select! {
                 _ = token.cancelled() => {
-
+                    warn!("Worker shutting down");
+                    break;
                 }
                 result = connection.read_command() => match result {
                     Ok(command) => {
@@ -52,6 +53,8 @@ impl WorkerProcess {
                 }
             }
         }
+
+        Ok(())
     }
 
     /// Spawn a remote process to act as the system worker

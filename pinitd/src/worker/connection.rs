@@ -37,10 +37,11 @@ struct Connection {
     write: Arc<Mutex<OwnedWriteHalf>>,
     health_tx: Sender<bool>,
     health_rx: Receiver<bool>,
+    is_controller: bool,
 }
 
 impl Connection {
-    fn from(stream: TcpStream) -> Self {
+    fn from(stream: TcpStream, is_controller: bool) -> Self {
         let (read, write) = stream.into_split();
 
         let (health_tx, health_rx) = watch::channel(true);
@@ -50,6 +51,7 @@ impl Connection {
             write: Arc::new(Mutex::new(write)),
             health_tx,
             health_rx,
+            is_controller,
         }
     }
 
@@ -62,6 +64,7 @@ impl Connection {
     }
 
     fn mark_disconnected(&self) {
+        error!("Controller/worker ({}) connection lost", self.is_controller);
         let _ = self.health_tx.send(false);
     }
 }
@@ -72,12 +75,13 @@ impl WorkerConnection {
         info!("Connected to worker");
 
         Ok(WorkerConnection {
-            connection: Connection::from(stream),
+            connection: Connection::from(stream, true),
         })
     }
 
     pub async fn write_command(&self, command: WorkerCommand) -> Result<WorkerResponse> {
         match timeout(Duration::from_millis(200), async move {
+            info!("Sending worker command");
             let mut write = self.connection.write.lock().await;
             command
                 .write(&mut *write)
@@ -125,7 +129,7 @@ impl ControllerConnection {
         info!("Connected to controller");
 
         Ok(ControllerConnection {
-            connection: Connection::from(stream),
+            connection: Connection::from(stream, false),
         })
     }
 

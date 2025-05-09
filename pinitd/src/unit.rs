@@ -13,12 +13,17 @@ pub enum RestartPolicy {
     None,
 }
 
-impl From<&str> for RestartPolicy {
-    fn from(value: &str) -> Self {
+impl TryFrom<&str> for RestartPolicy {
+    type Error = Error;
+
+    fn try_from(value: &str) -> Result<Self> {
         match value.to_ascii_lowercase().as_str() {
-            "always" => Self::Always,
-            "on-failure" => Self::OnFailure,
-            _ => Self::None,
+            "always" => Ok(Self::Always),
+            "on-failure" => Ok(Self::OnFailure),
+            "none" => Ok(Self::None),
+            _ => Err(Error::ConfigError(format!(
+                "Unsupported Restart \"{value}\""
+            ))),
         }
     }
 }
@@ -29,11 +34,13 @@ pub enum UID {
     Shell = 2000,
 }
 
-impl From<&str> for UID {
-    fn from(value: &str) -> Self {
+impl TryFrom<&str> for UID {
+    type Error = Error;
+    fn try_from(value: &str) -> Result<Self> {
         match value {
-            "1000" => Self::System,
-            "2000" | _ => Self::Shell,
+            "1000" => Ok(Self::System),
+            "2000" => Ok(Self::Shell),
+            _ => Err(Error::ConfigError(format!("Unsupported Uid \"{value}\""))),
         }
     }
 }
@@ -63,35 +70,48 @@ impl ServiceConfig {
             .section(Some("Service"))
             .ok_or_else(|| Error::ConfigError("Missing [Service] section".into()))?;
 
-        let name = service_section
-            .get("Name")
-            .ok_or_else(|| Error::ConfigError("Missing \"Name\" key in [Service]".into()))?
-            .trim()
-            .to_string();
+        let mut name = None;
+        let mut command = None;
+        let mut uid = UID::Shell;
+        let mut autostart = false;
+        let mut restart = RestartPolicy::None;
 
-        let command = service_section
-            .get("Exec")
-            .ok_or_else(|| Error::ConfigError("Missing \"Exec\" key in [Service]".into()))?
-            .trim()
-            .to_string();
-
-        let uid = service_section
-            .get("Uid")
-            .map_or(UID::Shell, |uid| uid.into());
-
-        let autostart = service_section
-            .get("Autostart")
-            .map_or(false, |v| v.trim().eq_ignore_ascii_case("true"));
-
-        let restart = service_section
-            .get("Restart")
-            .map_or(RestartPolicy::None, |r| r.into());
-
-        if name.is_empty() || command.is_empty() {
-            return Err(Error::ConfigError(
-                "\"Name\" and \"Exec\" cannot be empty".into(),
-            ));
+        for (property, value) in service_section.iter() {
+            match property {
+                "Name" => {
+                    name = Some(value.trim().to_string());
+                }
+                "Exec" => command = Some(value.trim().to_string()),
+                "Uid" => uid = value.trim().try_into()?,
+                "Autostart" => autostart = value.trim().eq_ignore_ascii_case("true"),
+                "Restart" => restart = value.trim().try_into()?,
+                _ => {
+                    return Err(Error::ConfigError(format!(
+                        "Unsupported property \"{property}\""
+                    )));
+                }
+            }
         }
+
+        let name = if let Some(name) = name {
+            if name.is_empty() {
+                return Err(Error::ConfigError("\"Name\" cannot be empty".into()));
+            }
+
+            name
+        } else {
+            return Err(Error::ConfigError("\"Name\" must be provided".into()));
+        };
+
+        let command = if let Some(command) = command {
+            if command.is_empty() {
+                return Err(Error::ConfigError("\"Exec\" cannot be empty".into()));
+            }
+
+            command
+        } else {
+            return Err(Error::ConfigError("\"Exec\" must be provided".into()));
+        };
 
         Ok(Self {
             name,

@@ -2,7 +2,7 @@ use std::{io, num::ParseIntError};
 
 use bincode::error::{DecodeError, EncodeError};
 use thiserror::Error;
-use tokio::time::error::Elapsed;
+use tokio::{sync::oneshot, time::error::Elapsed};
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -21,6 +21,8 @@ pub enum Error {
     WorkerProtocolError(String),
     #[error("Worker timeout error: {0}")]
     WorkerTimeoutError(#[from] Elapsed),
+    #[error("Connection error {0}")]
+    WorkerConnectionRecvError(#[from] oneshot::error::RecvError),
 
     #[error("Unknown service: \"{0}\"")]
     UnknownServiceError(String),

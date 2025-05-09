@@ -131,7 +131,10 @@ impl LocalRegistry {
                     let name = config.name.clone();
                     let enabled = registry.stored_state.enabled(&name);
                     let service = registry.registry.get_mut(&name);
-                    info!("Loaded config: {name} (Enabled: {enabled})");
+                    info!(
+                        "Loaded config: {name} (Enabled: {enabled}, UID: {:?})",
+                        config.uid
+                    );
 
                     if let Some(service) = service {
                         let mut service = SyncedService::from(service, None);
@@ -156,8 +159,11 @@ impl LocalRegistry {
     }
 
     pub async fn is_shell_service(&self, name: &str) -> Result<bool> {
-        self.with_service(name, |service| Ok(service.config().uid == UID::Shell))
-            .await
+        self.with_service(name, |service| {
+            info!("Config {:?}", service.config());
+            Ok(service.config().uid == UID::Shell)
+        })
+        .await
     }
 
     fn spawn(&self, name: String) -> JoinHandle<()> {

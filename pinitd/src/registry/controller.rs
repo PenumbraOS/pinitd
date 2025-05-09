@@ -11,9 +11,16 @@ use crate::{
 
 use super::{Registry, local::LocalRegistry};
 
+#[derive(Clone)]
 pub struct ControllerRegistry {
     local: LocalRegistry,
     remote: WorkerConnection,
+}
+
+impl ControllerRegistry {
+    pub fn new(local: LocalRegistry, remote: WorkerConnection) -> Self {
+        Self { local, remote }
+    }
 }
 
 impl Registry for ControllerRegistry {
