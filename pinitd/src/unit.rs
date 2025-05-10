@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use ini::Ini;
+use pinitd_common::UID;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 
@@ -24,23 +25,6 @@ impl TryFrom<&str> for RestartPolicy {
             _ => Err(Error::ConfigError(format!(
                 "Unsupported Restart \"{value}\""
             ))),
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
-pub enum UID {
-    System = 1000,
-    Shell = 2000,
-}
-
-impl TryFrom<&str> for UID {
-    type Error = Error;
-    fn try_from(value: &str) -> Result<Self> {
-        match value {
-            "1000" => Ok(Self::System),
-            "2000" => Ok(Self::Shell),
-            _ => Err(Error::ConfigError(format!("Unsupported Uid \"{value}\""))),
         }
     }
 }
@@ -82,7 +66,12 @@ impl ServiceConfig {
                     name = Some(value.trim().to_string());
                 }
                 "Exec" => command = Some(value.trim().to_string()),
-                "Uid" => uid = value.trim().try_into()?,
+                "Uid" => {
+                    uid = value
+                        .trim()
+                        .try_into()
+                        .map_err(|err| Error::ConfigError(err))?
+                }
                 "Autostart" => autostart = value.trim().eq_ignore_ascii_case("true"),
                 "Restart" => restart = value.trim().try_into()?,
                 _ => {

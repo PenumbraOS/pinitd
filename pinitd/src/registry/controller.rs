@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use pinitd_common::{
-    CONFIG_DIR, ServiceRunState, ServiceStatus,
+    CONFIG_DIR, ServiceRunState, ServiceStatus, UID,
     protocol::{CLICommand, CLIResponse},
 };
 use tokio::fs;
@@ -11,7 +11,7 @@ use crate::{
     error::{Error, Result},
     state::StoredState,
     types::{BaseService, Service},
-    unit::{ServiceConfig, UID},
+    unit::ServiceConfig,
     worker::{
         connection::WorkerConnection,
         protocol::{WorkerCommand, WorkerResponse},

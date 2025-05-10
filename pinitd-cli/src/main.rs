@@ -106,18 +106,17 @@ async fn main() -> Result<()> {
 }
 
 fn print_status(statuses: &[ServiceStatus]) {
-    println!(
-        "{:<20} {:<10} {:<25} {}",
-        "NAME", "ENABLED", "STATE", "CONFIG"
-    );
+    println!("{:<20} {:<10} {:<25} {}", "NAME", "ENABLED", "STATE", "UID");
     println!("{}", "-".repeat(80));
     for info in statuses {
+        let uid = info.uid.clone() as usize;
+
         println!(
-            "{:<20} {:<10} {:<25} {:?}",
+            "{:<20} {:<10} {:<25} {uid} ({:?})",
             info.name,
             info.enabled.to_string(),
             info.state.to_string(),
-            info.config_path
+            info.uid
         );
     }
 }

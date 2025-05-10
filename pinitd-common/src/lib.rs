@@ -42,6 +42,7 @@ impl std::fmt::Display for ServiceRunState {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ServiceStatus {
     pub name: String,
+    pub uid: UID,
     pub enabled: bool,
     pub state: ServiceRunState,
     pub config_path: PathBuf,
@@ -52,5 +53,22 @@ pub fn create_core_directories() {
 
     if let Some(parent) = Path::new(STATE_FILE).parent() {
         let _ = create_dir_all(parent);
+    }
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+pub enum UID {
+    System = 1000,
+    Shell = 2000,
+}
+
+impl TryFrom<&str> for UID {
+    type Error = String;
+    fn try_from(value: &str) -> Result<Self, String> {
+        match value {
+            "1000" => Ok(Self::System),
+            "2000" => Ok(Self::Shell),
+            _ => Err(format!("Unsupported Uid \"{value}\"")),
+        }
     }
 }

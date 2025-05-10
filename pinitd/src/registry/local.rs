@@ -1,7 +1,7 @@
 use std::{collections::HashMap, future::ready, process::Stdio, sync::Arc, time::Duration};
 
 use nix::libc::{SIGTERM, kill};
-use pinitd_common::{ServiceRunState, ServiceStatus};
+use pinitd_common::{ServiceRunState, ServiceStatus, UID};
 use tokio::{
     process::Command,
     sync::{Mutex, MutexGuard},
@@ -13,7 +13,7 @@ use crate::{
     error::{Error, Result},
     state::StoredState,
     types::{Service, SyncedService},
-    unit::{RestartPolicy, ServiceConfig, UID},
+    unit::{RestartPolicy, ServiceConfig},
     worker::connection::ControllerConnection,
 };
 
