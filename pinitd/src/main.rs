@@ -1,5 +1,5 @@
 #[macro_use]
-extern crate log;
+extern crate log as base_log;
 extern crate ai_pin_logger;
 
 use std::path::PathBuf;
@@ -7,10 +7,10 @@ use std::path::PathBuf;
 #[cfg(target_os = "android")]
 use ai_pin_logger::Config;
 use android_31317_exploit::exploit::{ExploitKind, payload};
+use base_log::LevelFilter;
 use clap::Parser;
 use controller::Controller;
 use error::Result;
-use log::LevelFilter;
 #[cfg(not(target_os = "android"))]
 use simple_logger::SimpleLogger;
 use worker::process::WorkerProcess;
@@ -18,6 +18,8 @@ use zygote::extract_and_write_fd;
 
 mod controller;
 mod error;
+#[cfg(not(target_os = "android"))]
+mod log;
 mod registry;
 mod state;
 mod types;
@@ -48,7 +50,7 @@ async fn main() {
     // Purposefully don't initialize logging until we need it, so we can specialize it for the process in question
     match run().await {
         Err(e) => {
-            init_logging_with_tag(None);
+            init_logging_with_tag("unspecialized".into());
             error!("{e}")
         }
         _ => (),
@@ -65,17 +67,17 @@ async fn run() -> Result<()> {
 
     match Args::try_parse()? {
         Args::Controller(_) => {
-            init_logging_with_tag(Some("pinitd-controller".into()));
+            init_logging_with_tag("pinitd-controller".into());
             info!("Specializing controller");
             Ok(Controller::specialize().await?)
         }
         Args::Worker(_) => {
-            init_logging_with_tag(Some("pinitd-worker".into()));
+            init_logging_with_tag("pinitd-worker".into());
             info!("Specializing worker");
             Ok(WorkerProcess::specialize().await?)
         }
         Args::BuildPayload(_) => {
-            init_logging_with_tag(None);
+            init_logging_with_tag("build".into());
             info!("Building init payload only");
             let payload = init_payload("/data/local/tmp/pinitd".into())?;
             // Write to stdout
@@ -86,21 +88,18 @@ async fn run() -> Result<()> {
 }
 
 #[cfg(target_os = "android")]
-fn init_logging_with_tag(tag: Option<String>) {
-    let config = Config::default();
-
-    let config = if let Some(tag) = tag {
-        config.with_tag(tag)
-    } else {
-        config
-    };
+fn init_logging_with_tag(tag: String) {
+    let config = Config::default().with_tag(tag);
 
     ai_pin_logger::init_once(config.with_max_level(LevelFilter::Trace));
 }
 
 #[cfg(not(target_os = "android"))]
-fn init_logging_with_tag(_tag: Option<String>) {
-    let _ = SimpleLogger::new().init();
+fn init_logging_with_tag(tag: String) {
+    use log::Logger;
+
+    Logger::init(tag);
+    // let _ = SimpleLogger::new().init();
 }
 
 fn init_payload(executable: PathBuf) -> Result<String> {
