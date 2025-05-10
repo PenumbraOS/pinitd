@@ -1,7 +1,15 @@
-use pinitd_common::{ServiceRunState, ServiceStatus};
+use std::path::Path;
+
+use pinitd_common::{
+    CONFIG_DIR, ServiceRunState, ServiceStatus,
+    protocol::{CLICommand, CLIResponse},
+};
+use tokio::fs;
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     error::{Error, Result},
+    state::StoredState,
     unit::{ServiceConfig, UID},
     worker::{
         connection::WorkerConnection,
@@ -18,8 +26,138 @@ pub struct ControllerRegistry {
 }
 
 impl ControllerRegistry {
-    pub fn new(local: LocalRegistry, remote: WorkerConnection) -> Self {
-        Self { local, remote }
+    pub async fn load_from_disk(remote: WorkerConnection) -> Result<Self> {
+        let state = StoredState::load().await?;
+        info!("Loaded enabled state for: {:?}", state.enabled_services);
+
+        info!("Loading service configurations from {}", CONFIG_DIR);
+        let mut directory = fs::read_dir(CONFIG_DIR).await?;
+
+        let local = LocalRegistry::controller(state)?;
+        let registry = ControllerRegistry { local, remote };
+        let mut load_count = 0;
+
+        while let Some(entry) = directory.next_entry().await? {
+            let path = entry.path();
+            if path.is_file() && path.extension().map_or(false, |ext| ext == "unit") {
+                info!("Found config {}", path.display());
+                match registry.load_unit_config(&path).await {
+                    Ok(config) => {
+                        let name = config.name.clone();
+                        match registry.insert_unit_with_current_state(config).await {
+                            Ok(_) => {
+                                load_count += 1;
+                            }
+                            Err(err) => {
+                                error!("Failed to insert unit file \"{name}\": {err}");
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        // Eat error
+                        error!("Failed to load unit file \"{}\": {err}", path.display());
+                    }
+                }
+            }
+        }
+
+        info!("Finished loading configurations. {load_count} services loaded.",);
+
+        Ok(registry)
+    }
+
+    pub async fn service_reload(&self, name: String) -> Result<Option<ServiceConfig>> {
+        let existing_config = self
+            .local
+            .with_service(&name, |service| Ok(service.config().clone()))
+            .await?;
+
+        let new_config = self
+            .load_unit_config(&existing_config.unit_file_path)
+            .await?;
+
+        if new_config != existing_config {
+            let enabled = self.local.is_enabled(&name).await?;
+            self.insert_unit(new_config.clone(), enabled).await?;
+            if enabled {
+                self.service_restart(name).await?;
+            }
+
+            Ok(Some(new_config))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub async fn process_remote_command(
+        &self,
+        command: CLICommand,
+        shutdown_token: CancellationToken,
+    ) -> CLIResponse {
+        match command {
+            CLICommand::Start(name) => match self.service_start(name.clone()).await {
+                Ok(did_start) => {
+                    if did_start {
+                        CLIResponse::Success(format!("Service \"{name}\" started",))
+                    } else {
+                        CLIResponse::Success(format!("Service \"{name}\" already running",))
+                    }
+                }
+                Err(err) => {
+                    CLIResponse::Error(format!("Failed to start service \"{name}\": {err}"))
+                }
+            },
+            CLICommand::Stop(name) => match self.service_stop(name.clone()).await {
+                Ok(_) => CLIResponse::Success(format!("Service \"{name}\" stop initiated.")),
+                Err(err) => CLIResponse::Error(format!("Failed to stop service \"{name}\": {err}")),
+            },
+            CLICommand::Restart(name) => match self.service_restart(name.clone()).await {
+                Ok(_) => CLIResponse::Success(format!("Service \"{name}\" restarted")),
+                Err(err) => {
+                    CLIResponse::Error(format!("Failed to restart service \"{name}\": {err}"))
+                }
+            },
+            CLICommand::Enable(name) => match self.service_enable(name.clone()).await {
+                Ok(_) => CLIResponse::Success(format!("Service \"{name}\" enabled")),
+                Err(err) => {
+                    CLIResponse::Error(format!("Failed to enable service \"{name}\": {err}"))
+                }
+            },
+            CLICommand::Disable(name) => match self.service_disable(name.clone()).await {
+                Ok(_) => CLIResponse::Success(format!("Service \"{name}\" disabled")),
+                Err(err) => {
+                    CLIResponse::Error(format!("Failed to disable service \"{name}\": {err}"))
+                }
+            },
+            CLICommand::Reload(name) => match self.service_reload(name.clone()).await {
+                Ok(_) => CLIResponse::Success(format!("Service \"{name}\" reloaded")),
+                Err(err) => {
+                    CLIResponse::Error(format!("Failed to reload service \"{name}\": {err}"))
+                }
+            },
+            CLICommand::Status(name) => match self.service_status(name).await {
+                Ok(status) => CLIResponse::Status(status),
+                Err(err) => CLIResponse::Error(err.to_string()),
+            },
+            CLICommand::List => match self.service_list_all().await {
+                Ok(list) => CLIResponse::List(list),
+                Err(err) => CLIResponse::Error(format!("Failed to retrieve service list: {err}")),
+            },
+            CLICommand::Shutdown => {
+                info!("Shutdown RemoteCommand received.");
+                shutdown_token.cancel();
+                CLIResponse::ShuttingDown // Respond immediately
+            }
+        }
+    }
+
+    async fn load_unit_config(&self, path: &Path) -> Result<ServiceConfig> {
+        ServiceConfig::parse(path).await
+    }
+
+    async fn insert_unit_with_current_state(&self, config: ServiceConfig) -> Result<()> {
+        let enabled = self.local.is_enabled(&config.name).await?;
+        self.insert_unit(config, enabled).await
     }
 }
 
@@ -113,19 +251,6 @@ impl Registry for ControllerRegistry {
 
     async fn service_disable(&self, name: String) -> Result<()> {
         self.local.service_disable(name).await
-    }
-
-    async fn service_reload(&self, name: String) -> Result<Option<ServiceConfig>> {
-        let result: Option<ServiceConfig> = self.local.service_reload(name.clone()).await?;
-        if self.local.is_shell_service(&name).await? {
-            if let Some(config) = &result {
-                self.remote
-                    .write_command(WorkerCommand::Create(config.clone()))
-                    .await?;
-            }
-        }
-
-        Ok(result)
     }
 
     async fn service_status(&self, name: String) -> Result<ServiceStatus> {

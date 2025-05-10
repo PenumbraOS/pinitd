@@ -18,7 +18,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     error::Result,
-    registry::{Registry, controller::ControllerRegistry, local::LocalRegistry},
+    registry::{Registry, controller::ControllerRegistry},
     worker::{connection::WorkerConnection, process::WorkerProcess},
 };
 
@@ -33,8 +33,7 @@ impl Controller {
 
         let worker_connection = start_worker().await?;
 
-        let local_registry = LocalRegistry::load().await?;
-        let registry = ControllerRegistry::new(local_registry, worker_connection);
+        let registry = ControllerRegistry::load_from_disk(worker_connection).await?;
         let controller = Controller { registry };
 
         controller.registry.autostart_all().await?;

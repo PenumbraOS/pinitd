@@ -1,11 +1,8 @@
-use std::{
-    collections::HashMap, future::ready, path::Path, process::Stdio, sync::Arc, time::Duration,
-};
+use std::{collections::HashMap, future::ready, process::Stdio, sync::Arc, time::Duration};
 
 use nix::libc::{SIGTERM, kill};
-use pinitd_common::{CONFIG_DIR, ServiceRunState, ServiceStatus};
+use pinitd_common::{ServiceRunState, ServiceStatus};
 use tokio::{
-    fs,
     process::Command,
     sync::{Mutex, MutexGuard},
     task::JoinHandle,
@@ -32,6 +29,17 @@ struct InnerServiceRegistry {
 pub struct LocalRegistry(Arc<Mutex<InnerServiceRegistry>>);
 
 impl LocalRegistry {
+    pub fn controller(stored_state: StoredState) -> Result<Self> {
+        let inner = InnerServiceRegistry {
+            stored_state,
+            registry: HashMap::new(),
+            controller_connection: None,
+        };
+
+        let registry = LocalRegistry(Arc::new(Mutex::new(inner)));
+        Ok(registry)
+    }
+
     pub fn worker(connection: ControllerConnection) -> Result<Self> {
         let inner = InnerServiceRegistry {
             stored_state: StoredState::dummy(),
@@ -40,40 +48,6 @@ impl LocalRegistry {
         };
 
         let registry = LocalRegistry(Arc::new(Mutex::new(inner)));
-        Ok(registry)
-    }
-
-    pub async fn load() -> Result<Self> {
-        let state = StoredState::load().await?;
-        info!("Loaded enabled state for: {:?}", state.enabled_services);
-
-        info!("Loading service configurations from {}", CONFIG_DIR);
-        let mut directory = fs::read_dir(CONFIG_DIR).await?;
-
-        let registry = HashMap::new();
-
-        let inner = InnerServiceRegistry {
-            stored_state: state,
-            registry,
-            controller_connection: None,
-        };
-
-        let registry = LocalRegistry(Arc::new(Mutex::new(inner)));
-        let mut load_count = 0;
-
-        while let Some(entry) = directory.next_entry().await? {
-            let path = entry.path();
-            if path.is_file() && path.extension().map_or(false, |ext| ext == "unit") {
-                info!("Found config {}", path.display());
-                // Eat errors
-                if let Ok(_) = registry.load_unit(&path).await {
-                    load_count += 1;
-                }
-            }
-        }
-
-        info!("Finished loading configurations. {load_count} services loaded.",);
-
         Ok(registry)
     }
 
@@ -124,38 +98,9 @@ impl LocalRegistry {
         Ok(result)
     }
 
-    async fn load_unit(&self, path: &Path) -> Result<Option<ServiceConfig>> {
-        match ServiceConfig::parse(path).await {
-            Ok(config) => {
-                self.with_registry(|mut registry| {
-                    let name = config.name.clone();
-                    let enabled = registry.stored_state.enabled(&name);
-                    let service = registry.registry.get_mut(&name);
-                    info!(
-                        "Loaded config: {name} (Enabled: {enabled}, UID: {:?})",
-                        config.uid
-                    );
-
-                    if let Some(service) = service {
-                        let mut service = SyncedService::from(service, None);
-                        if config != *service.config() {
-                            service.set_config(config.clone());
-                            Ok(Some(config))
-                        } else {
-                            Ok(None)
-                        }
-                    } else {
-                        create_and_insert_unit(&mut registry, config.clone(), enabled);
-                        Ok(Some(config))
-                    }
-                })
-                .await
-            }
-            Err(e) => {
-                warn!("Failed to parse unit file {:?}: {}", path, e);
-                Err(e)
-            }
-        }
+    pub async fn is_enabled(&self, name: &String) -> Result<bool> {
+        self.with_registry(|registry| Ok(registry.stored_state.enabled(name)))
+            .await
     }
 
     pub async fn is_shell_service(&self, name: &str) -> Result<bool> {
@@ -334,7 +279,11 @@ impl Registry for LocalRegistry {
 
     async fn insert_unit(&self, config: ServiceConfig, enabled: bool) -> Result<()> {
         self.with_registry(|mut registry| {
-            create_and_insert_unit(&mut registry, config, enabled);
+            let name = config.name.clone();
+            let runtime = Service::new(config, ServiceRunState::Stopped, enabled);
+
+            registry.registry.insert(name, runtime);
+
             Ok(())
         })
         .await
@@ -445,19 +394,6 @@ impl Registry for LocalRegistry {
         Ok(())
     }
 
-    async fn service_reload(&self, name: String) -> Result<Option<ServiceConfig>> {
-        let path = self
-            .with_service(&name, |service| Ok(service.config().unit_file_path.clone()))
-            .await?;
-
-        let did_change = self.load_unit(&path).await?;
-        if did_change.is_some() {
-            self.service_restart(name).await?;
-        }
-
-        Ok(did_change)
-    }
-
     async fn service_status(&self, name: String) -> Result<ServiceStatus> {
         self.with_service(&name, |service| Ok(service.status()))
             .await
@@ -506,15 +442,4 @@ fn service_stop_internal(name: &str, service: &mut SyncedService) {
             warn!("Service \"{name}\" is not running");
         }
     }
-}
-
-fn create_and_insert_unit(
-    registry: &mut MutexGuard<'_, InnerServiceRegistry>,
-    config: ServiceConfig,
-    enabled: bool,
-) {
-    let name = config.name.clone();
-    let runtime = Service::new(config, ServiceRunState::Stopped, enabled);
-
-    registry.registry.insert(name, runtime);
 }
