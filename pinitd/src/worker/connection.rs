@@ -63,8 +63,11 @@ impl Connection {
         let _ = self.health_rx.wait_for(|value| !*value).await;
     }
 
-    fn mark_disconnected(&self) {
-        error!("Controller/worker ({}) connection lost", self.is_controller);
+    fn mark_disconnected(&self, message: String) {
+        error!(
+            "Controller/worker ({}) connection lost. Error: {message}",
+            self.is_controller
+        );
         let _ = self.health_tx.send(false);
     }
 }
@@ -104,11 +107,11 @@ impl WorkerConnection {
             }
             Ok(Err(err)) => {
                 // Any error immediately closes the connection
-                self.connection.mark_disconnected();
+                self.connection.mark_disconnected(err.to_string());
                 Err(err)
             }
             Err(err) => {
-                self.connection.mark_disconnected();
+                self.connection.mark_disconnected(err.to_string());
                 Err(err.into())
             }
         }
@@ -135,11 +138,12 @@ impl ControllerConnection {
 
     pub async fn read_command(&self) -> Result<WorkerCommand> {
         let mut read = self.connection.read.lock().await;
+        info!("Awaiting command");
         match WorkerCommand::read(&mut *read).await {
             Ok(command) => Ok(command),
             Err(err) => {
                 // Any error immediately closes the connection
-                self.connection.mark_disconnected();
+                self.connection.mark_disconnected(err.to_string());
                 Err(err)
             }
         }
@@ -151,7 +155,7 @@ impl ControllerConnection {
             Ok(_) => Ok(()),
             Err(err) => {
                 // Any error immediately closes the connection
-                self.connection.mark_disconnected();
+                self.connection.mark_disconnected(err.to_string());
                 Err(err)
             }
         }
@@ -163,7 +167,7 @@ impl ControllerConnection {
             Ok(_) => Ok(()),
             Err(err) => {
                 // Any error immediately closes the connection
-                self.connection.mark_disconnected();
+                self.connection.mark_disconnected(err.to_string());
                 Err(err)
             }
         }

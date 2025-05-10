@@ -42,22 +42,28 @@ where
     S: AsyncReadExt + Unpin,
 {
     async fn read(stream: &mut S) -> Result<Self> {
-        let mut len_bytes = [0; std::mem::size_of::<u64>()];
-
-        match stream.read_exact(&mut len_bytes).await {
-            Ok(_) => {
-                stream.read_exact(&mut len_bytes).await?;
-                let len = u64::from_le_bytes(len_bytes);
-
-                let mut buffer = vec![0; len as usize];
-                stream.read_exact(&mut buffer).await?;
-
-                let (result, _) = Self::decode(&buffer)?;
-                Ok(result)
-            }
+        match read_internal(stream).await {
+            Ok(result) => Ok(result),
             Err(err) => Err(Error::WorkerProtocolError(err.to_string())),
         }
     }
+}
+
+async fn read_internal<'a, S, T>(stream: &mut S) -> Result<T>
+where
+    T: Bincodable<'a>,
+    S: AsyncReadExt + Unpin,
+{
+    let mut len_bytes = [0; std::mem::size_of::<u64>()];
+
+    stream.read_exact(&mut len_bytes).await?;
+    let len = u64::from_le_bytes(len_bytes);
+
+    let mut buffer = vec![0; len as usize];
+    stream.read_exact(&mut buffer).await?;
+
+    let (result, _) = T::decode(&buffer)?;
+    Ok(result)
 }
 
 pub trait WorkerWrite<'a, S>
