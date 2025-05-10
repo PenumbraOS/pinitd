@@ -10,7 +10,7 @@ use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
     signal::unix::{SignalKind, signal},
-    sync::oneshot,
+    sync::{mpsc, oneshot},
     task::JoinHandle,
     time::sleep,
 };
@@ -19,6 +19,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     error::Result,
     registry::{Registry, controller::ControllerRegistry},
+    types::BaseService,
     worker::{connection::WorkerConnection, process::WorkerProcess},
 };
 
@@ -31,11 +32,13 @@ impl Controller {
     pub async fn specialize() -> Result<()> {
         create_core_directories();
 
-        let worker_connection = start_worker().await?;
+        let (worker_connection, worker_service_update_rx) = start_worker().await?;
 
-        let registry = ControllerRegistry::load_from_disk(worker_connection).await?;
+        let registry = ControllerRegistry::new(worker_connection).await?;
+        start_worker_update_watcher(registry.clone(), worker_service_update_rx);
         let controller = Controller { registry };
 
+        controller.registry.load_from_disk().await?;
         controller.registry.autostart_all().await?;
 
         let shutdown_token = CancellationToken::new();
@@ -115,7 +118,7 @@ impl Controller {
     }
 }
 
-async fn start_worker() -> Result<WorkerConnection> {
+async fn start_worker() -> Result<(WorkerConnection, mpsc::Receiver<BaseService>)> {
     let socket = TcpListener::bind(&WORKER_SOCKET_ADDRESS).await?;
     info!("Listening for worker");
 
@@ -124,6 +127,7 @@ async fn start_worker() -> Result<WorkerConnection> {
     WorkerProcess::spawn().await?;
     info!("Spawning worker sent");
 
+    let (worker_service_update_tx, worker_service_update_rx) = mpsc::channel::<BaseService>(10);
     let (worker_connected_tx, worker_connected_rx) = oneshot::channel::<WorkerConnection>();
 
     tokio::spawn(async move {
@@ -133,14 +137,15 @@ async fn start_worker() -> Result<WorkerConnection> {
 
         loop {
             info!("Attempting to connect to worker");
-            let mut connection = match WorkerConnection::open(&mut socket).await {
-                Ok(connection) => connection,
-                Err(err) => {
-                    error!("Error connecting to worker: {err}");
-                    sleep(Duration::from_secs(2)).await;
-                    continue;
-                }
-            };
+            let mut connection =
+                match WorkerConnection::open(&mut socket, worker_service_update_tx.clone()).await {
+                    Ok(connection) => connection,
+                    Err(err) => {
+                        error!("Error connecting to worker: {err}");
+                        sleep(Duration::from_secs(2)).await;
+                        continue;
+                    }
+                };
 
             info!("Worker connection established");
             if let Some(tx) = worker_connected_tx {
@@ -158,7 +163,27 @@ async fn start_worker() -> Result<WorkerConnection> {
     let connection = worker_connected_rx.await?;
     info!("Worker spawn message received. Continuing...");
 
-    Ok(connection)
+    Ok((connection, worker_service_update_rx))
+}
+
+fn start_worker_update_watcher(
+    registry: ControllerRegistry,
+    mut worker_service_update_rx: mpsc::Receiver<BaseService>,
+) {
+    tokio::spawn(async move {
+        loop {
+            let service = worker_service_update_rx
+                .recv()
+                .await
+                .expect("Channel unexpectedly closed");
+
+            let name = service.config.name.clone();
+
+            if let Err(err) = registry.clone().worker_service_update(service).await {
+                error!("Could not update remote service \"{name}\": {err}")
+            }
+        }
+    });
 }
 
 fn setup_signal_watchers(shutdown_token: CancellationToken) -> Result<JoinHandle<()>> {

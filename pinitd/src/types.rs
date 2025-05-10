@@ -2,13 +2,17 @@ use pinitd_common::{ServiceRunState, ServiceStatus};
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
 
-use crate::{error::Result, unit::ServiceConfig, worker::connection::ControllerConnection};
+use crate::{
+    error::Result,
+    unit::ServiceConfig,
+    worker::{connection::ControllerConnection, protocol::WorkerResponse},
+};
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct BaseService {
-    config: ServiceConfig,
-    state: ServiceRunState,
-    enabled: bool,
+    pub config: ServiceConfig,
+    pub state: ServiceRunState,
+    pub enabled: bool,
 }
 
 pub struct Service {
@@ -24,6 +28,13 @@ impl Service {
                 state,
                 enabled,
             },
+            monitor_task: None,
+        }
+    }
+
+    pub fn from(service: BaseService) -> Self {
+        Self {
+            inner: service,
             monitor_task: None,
         }
     }
@@ -72,7 +83,7 @@ impl<'a> SyncedService<'a> {
 
         if let Some(connection) = &self.connection {
             connection
-                .write_service_update(self.service.inner.clone())
+                .write_response(WorkerResponse::ServiceUpdate(self.service.inner.clone()))
                 .await
         } else {
             Ok(())

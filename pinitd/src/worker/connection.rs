@@ -7,22 +7,26 @@ use tokio::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
     },
     sync::{
-        Mutex,
-        watch::{self, Receiver, Sender},
+        Mutex, MutexGuard, mpsc,
+        watch::{self, Receiver},
     },
+    task::JoinHandle,
     time::timeout,
 };
 
-use crate::error::{Error, Result};
-
-use super::protocol::{
-    WorkerCommand, WorkerRead, WorkerResponse, WorkerServiceUpdate, WorkerWrite,
+use crate::{
+    error::{Error, Result},
+    types::BaseService,
 };
+
+use super::protocol::{WorkerCommand, WorkerRead, WorkerResponse, WorkerWrite};
 
 /// Connection held by Controller to transfer data to/from Worker
 #[derive(Clone)]
 pub struct WorkerConnection {
     connection: Connection,
+    read: Arc<Mutex<mpsc::Receiver<WorkerResponse>>>,
+    read_loop: Arc<Mutex<JoinHandle<()>>>,
 }
 
 /// Connection held by Worker to transfer data to/from Controller
@@ -35,7 +39,7 @@ pub struct ControllerConnection {
 struct Connection {
     read: Arc<Mutex<OwnedReadHalf>>,
     write: Arc<Mutex<OwnedWriteHalf>>,
-    health_tx: Sender<bool>,
+    health_tx: watch::Sender<bool>,
     health_rx: Receiver<bool>,
     is_controller: bool,
 }
@@ -73,12 +77,58 @@ impl Connection {
 }
 
 impl WorkerConnection {
-    pub async fn open(socket: &mut TcpListener) -> Result<Self> {
+    pub async fn open(
+        socket: &mut TcpListener,
+        worker_service_update_tx: mpsc::Sender<BaseService>,
+    ) -> Result<Self> {
         let (stream, _) = socket.accept().await?;
         info!("Connected to worker");
 
+        let connection = Connection::from(stream, true);
+
+        let (read_tx, read_rx) = mpsc::channel::<WorkerResponse>(10);
+        let read_loop = WorkerConnection::start_read_loop(
+            connection.clone(),
+            read_tx,
+            worker_service_update_tx,
+        )
+        .await;
+
         Ok(WorkerConnection {
-            connection: Connection::from(stream, true),
+            connection,
+            read: Arc::new(Mutex::new(read_rx)),
+            read_loop: Arc::new(Mutex::new(read_loop)),
+        })
+    }
+
+    async fn start_read_loop(
+        connection: Connection,
+        read_tx: mpsc::Sender<WorkerResponse>,
+        worker_service_update_tx: mpsc::Sender<BaseService>,
+    ) -> JoinHandle<()> {
+        tokio::spawn(async move {
+            // Permanently hold read lock
+            let mut read_lock = connection.read.lock().await;
+
+            loop {
+                match WorkerResponse::read(&mut *read_lock).await {
+                    Ok(response) => {
+                        match response {
+                            WorkerResponse::ServiceUpdate(service) => {
+                                // We probably don't care about these errors
+                                let _ = worker_service_update_tx.send(service).await;
+                            }
+                            _ => {
+                                // We probably don't care about these errors
+                                let _ = read_tx.send(response).await;
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        error!("Failed to read from worker: {err}");
+                    }
+                }
+            }
         })
     }
 
@@ -90,8 +140,10 @@ impl WorkerConnection {
                 .write(&mut *write)
                 .await
                 .map(|_| async {
-                    let mut read = self.connection.read.lock().await;
-                    WorkerResponse::read(&mut *read).await
+                    match self.read.lock().await.recv().await {
+                        Some(response) => Ok(response),
+                        None => Err(Error::WorkerProtocolError("Connection closed".into())),
+                    }
                 })?
                 .await
         })
@@ -150,20 +202,20 @@ impl ControllerConnection {
     }
 
     pub async fn write_response(&self, response: WorkerResponse) -> Result<()> {
-        let mut write = self.connection.write.lock().await;
-        match response.write(&mut *write).await {
-            Ok(_) => Ok(()),
-            Err(err) => {
-                // Any error immediately closes the connection
-                self.connection.mark_disconnected(err.to_string());
-                Err(err)
-            }
-        }
+        let write_lock = self.acquire_write_lock().await;
+        self.write_response_with_lock(write_lock, response).await
     }
 
-    pub async fn write_service_update(&self, update: WorkerServiceUpdate) -> Result<()> {
-        let mut write = self.connection.write.lock().await;
-        match update.write(&mut *write).await {
+    pub async fn acquire_write_lock(&self) -> MutexGuard<'_, OwnedWriteHalf> {
+        self.connection.write.lock().await
+    }
+
+    pub async fn write_response_with_lock(
+        &self,
+        mut write_lock: MutexGuard<'_, OwnedWriteHalf>,
+        response: WorkerResponse,
+    ) -> Result<()> {
+        match response.write(&mut *write_lock).await {
             Ok(_) => Ok(()),
             Err(err) => {
                 // Any error immediately closes the connection

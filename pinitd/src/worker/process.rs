@@ -34,6 +34,9 @@ impl WorkerProcess {
                     Ok(command) => {
                         info!("Received command {command:?}");
 
+                        // Before processing command, open lock on write socket so we don't push any data in the middle of our command response
+                        let write_lock = connection.acquire_write_lock().await;
+
                         let response = match handle_command(command, &mut registry, &token).await {
                             Ok(response) => response,
                             Err(err) => {
@@ -43,7 +46,8 @@ impl WorkerProcess {
                             }
                         };
 
-                        connection.write_response(response).await?;
+                        info!("Sending command response");
+                        connection.write_response_with_lock(write_lock, response).await?;
                     }
                     Err(err) => {
                         error!("Error processing command packet: {err}");

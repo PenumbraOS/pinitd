@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     error::{Error, Result},
     state::StoredState,
+    types::{BaseService, Service},
     unit::{ServiceConfig, UID},
     worker::{
         connection::WorkerConnection,
@@ -26,25 +27,28 @@ pub struct ControllerRegistry {
 }
 
 impl ControllerRegistry {
-    pub async fn load_from_disk(remote: WorkerConnection) -> Result<Self> {
+    pub async fn new(remote: WorkerConnection) -> Result<Self> {
         let state = StoredState::load().await?;
         info!("Loaded enabled state for: {:?}", state.enabled_services);
 
         info!("Loading service configurations from {}", CONFIG_DIR);
-        let mut directory = fs::read_dir(CONFIG_DIR).await?;
-
         let local = LocalRegistry::controller(state)?;
-        let registry = ControllerRegistry { local, remote };
+        Ok(Self { local, remote })
+    }
+
+    pub async fn load_from_disk(&self) -> Result<()> {
         let mut load_count = 0;
+
+        let mut directory = fs::read_dir(CONFIG_DIR).await?;
 
         while let Some(entry) = directory.next_entry().await? {
             let path = entry.path();
             if path.is_file() && path.extension().map_or(false, |ext| ext == "unit") {
                 info!("Found config {}", path.display());
-                match registry.load_unit_config(&path).await {
+                match self.load_unit_config(&path).await {
                     Ok(config) => {
                         let name = config.name.clone();
-                        match registry.insert_unit_with_current_state(config).await {
+                        match self.insert_unit_with_current_state(config).await {
                             Ok(_) => {
                                 load_count += 1;
                             }
@@ -61,9 +65,9 @@ impl ControllerRegistry {
             }
         }
 
-        info!("Finished loading configurations. {load_count} services loaded.",);
+        info!("Finished loading configurations. {load_count} services loaded.");
 
-        Ok(registry)
+        Ok(())
     }
 
     pub async fn service_reload(&self, name: String) -> Result<Option<ServiceConfig>> {
@@ -149,6 +153,13 @@ impl ControllerRegistry {
                 CLIResponse::ShuttingDown // Respond immediately
             }
         }
+    }
+
+    pub async fn worker_service_update(&self, service: BaseService) -> Result<()> {
+        // We don't want to write back to worker
+        self.local
+            .internal_insert_service(Service::from(service))
+            .await
     }
 
     async fn load_unit_config(&self, path: &Path) -> Result<ServiceConfig> {

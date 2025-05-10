@@ -27,14 +27,12 @@ pub enum WorkerResponse {
     Success,
     Error(String),
     Status(HashMap<String, ServiceRunState>),
+    ServiceUpdate(BaseService),
     ShuttingDown,
 }
 
-pub type WorkerServiceUpdate = BaseService;
-
 impl Bincodable<'_> for WorkerCommand {}
 impl Bincodable<'_> for WorkerResponse {}
-impl Bincodable<'_> for WorkerServiceUpdate {}
 
 pub trait WorkerRead<'a, S>
 where
@@ -49,18 +47,22 @@ where
     }
 }
 
+type LengthType = u64;
+
 async fn read_internal<'a, S, T>(stream: &mut S) -> Result<T>
 where
     T: Bincodable<'a>,
     S: AsyncReadExt + Unpin,
 {
-    let mut len_bytes = [0; std::mem::size_of::<u64>()];
+    let mut len_bytes = [0; std::mem::size_of::<LengthType>()];
 
     stream.read_exact(&mut len_bytes).await?;
-    let len = u64::from_le_bytes(len_bytes);
+    let len = LengthType::from_le_bytes(len_bytes);
+    info!("Reading len {len}");
 
     let mut buffer = vec![0; len as usize];
     stream.read_exact(&mut buffer).await?;
+    info!("Read bytes {buffer:?}");
 
     let (result, _) = T::decode(&buffer)?;
     Ok(result)
@@ -74,7 +76,9 @@ where
     async fn write(self, stream: &mut S) -> Result<()> {
         let buffer = self.encode()?;
 
-        let len_bytes = (buffer.len() as u64).to_le_bytes();
+        info!("Writing {buffer:?}");
+
+        let len_bytes = (buffer.len() as LengthType).to_le_bytes();
         stream.write_all(&len_bytes).await?;
         stream.write_all(&buffer).await?;
 
@@ -84,8 +88,6 @@ where
 
 impl<T> WorkerRead<'_, T> for WorkerCommand where T: AsyncReadExt + Unpin {}
 impl<T> WorkerRead<'_, T> for WorkerResponse where T: AsyncReadExt + Unpin {}
-impl<T> WorkerRead<'_, T> for WorkerServiceUpdate where T: AsyncReadExt + Unpin {}
 
 impl<T> WorkerWrite<'_, T> for WorkerCommand where T: AsyncWriteExt + Unpin {}
 impl<T> WorkerWrite<'_, T> for WorkerResponse where T: AsyncWriteExt + Unpin {}
-impl<T> WorkerWrite<'_, T> for WorkerServiceUpdate where T: AsyncWriteExt + Unpin {}

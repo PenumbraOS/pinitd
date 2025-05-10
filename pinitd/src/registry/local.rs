@@ -111,6 +111,16 @@ impl LocalRegistry {
         .await
     }
 
+    pub async fn internal_insert_service(&self, service: Service) -> Result<()> {
+        self.with_registry(|mut registry| {
+            registry
+                .registry
+                .insert(service.config().name.clone(), service);
+            Ok(())
+        })
+        .await
+    }
+
     fn spawn(&self, name: String) -> JoinHandle<()> {
         let inner_name = name.clone();
         let inner_registry = self.clone();
@@ -278,15 +288,8 @@ impl Registry for LocalRegistry {
     }
 
     async fn insert_unit(&self, config: ServiceConfig, enabled: bool) -> Result<()> {
-        self.with_registry(|mut registry| {
-            let name = config.name.clone();
-            let runtime = Service::new(config, ServiceRunState::Stopped, enabled);
-
-            registry.registry.insert(name, runtime);
-
-            Ok(())
-        })
-        .await
+        let service = Service::new(config, ServiceRunState::Stopped, enabled);
+        self.internal_insert_service(service).await
     }
 
     async fn remove_unit(&self, name: String) -> Result<bool> {
