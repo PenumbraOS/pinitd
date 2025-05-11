@@ -35,7 +35,13 @@ impl Controller {
     pub async fn specialize() -> Result<()> {
         create_core_directories();
 
-        let registry = ControllerRegistry::new().await?;
+        let StartWorkerState {
+            connection,
+            worker_service_update_rx,
+            worker_connected_rx,
+        } = start_worker().await?;
+
+        let registry = ControllerRegistry::new(connection).await?;
         let controller = Controller { registry };
 
         controller.registry.load_from_disk().await?;
@@ -45,11 +51,6 @@ impl Controller {
 
         info!("Delaying to allow Zygote to settle");
         sleep(Duration::from_millis(500)).await;
-
-        let StartWorkerState {
-            worker_service_update_rx,
-            mut worker_connected_rx,
-        } = start_worker().await?;
 
         start_worker_update_watcher(controller.registry.clone(), worker_service_update_rx);
 
@@ -61,21 +62,6 @@ impl Controller {
                 .await;
         });
 
-        info!("Waiting for worker to report back");
-        loop {
-            match await_connection_status_update(&mut worker_connected_rx).await {
-                WorkerConnectionStatus::Connected(_) => {
-                    info!("Worker spawn message received. Continuing...");
-                    break;
-                }
-                WorkerConnectionStatus::Disconnected => {
-                    warn!(
-                        "Worker unexpectedly disconnected before first connection. Awaiting connection..."
-                    );
-                }
-            }
-        }
-        info!("Worker connected");
         controller.start_worker_connection_listener(worker_connected_rx);
 
         info!("Autostarting services");
@@ -165,7 +151,7 @@ impl Controller {
 }
 
 struct StartWorkerState {
-    // connection: WorkerConnection,
+    connection: WorkerConnection,
     worker_service_update_rx: Receiver<BaseService>,
     worker_connected_rx: Receiver<WorkerConnectionStatus>,
 }
@@ -180,7 +166,8 @@ async fn start_worker() -> Result<StartWorkerState> {
     info!("Spawning worker sent");
 
     let (worker_service_update_tx, worker_service_update_rx) = mpsc::channel::<BaseService>(10);
-    let (worker_connected_tx, worker_connected_rx) = mpsc::channel::<WorkerConnectionStatus>(10);
+    let (worker_connected_tx, mut worker_connected_rx) =
+        mpsc::channel::<WorkerConnectionStatus>(10);
 
     tokio::spawn(async move {
         let mut socket = socket;
@@ -211,10 +198,24 @@ async fn start_worker() -> Result<StartWorkerState> {
         }
     });
 
-    Ok(StartWorkerState {
-        worker_connected_rx,
-        worker_service_update_rx,
-    })
+    info!("Waiting for worker to report back");
+    loop {
+        match await_connection_status_update(&mut worker_connected_rx).await {
+            WorkerConnectionStatus::Connected(connection) => {
+                info!("Worker spawn message received. Continuing...");
+                return Ok(StartWorkerState {
+                    connection,
+                    worker_connected_rx,
+                    worker_service_update_rx,
+                });
+            }
+            WorkerConnectionStatus::Disconnected => {
+                warn!(
+                    "Worker unexpectedly disconnected before first connection. Awaiting connection..."
+                );
+            }
+        }
+    }
 }
 
 async fn await_connection_status_update(

@@ -66,7 +66,7 @@ pub struct ControllerRegistry {
 }
 
 impl ControllerRegistry {
-    pub async fn new() -> Result<Self> {
+    pub async fn new(connection: WorkerConnection) -> Result<Self> {
         let state = StoredState::load().await?;
         info!("Loaded enabled state for: {:?}", state.enabled_services);
 
@@ -74,7 +74,7 @@ impl ControllerRegistry {
         let local = LocalRegistry::controller(state)?;
         Ok(Self {
             local,
-            remote: Arc::new(Mutex::new(ControllerRegistryWorker::new_disconnected())),
+            remote: Arc::new(Mutex::new(ControllerRegistryWorker::Connected(connection))),
         })
     }
 
