@@ -107,6 +107,7 @@ impl ControllerRegistry {
                 }
             }
         }
+        // TODO: Delete registry entries that aren't present
 
         info!("Finished loading configurations. {load_count} services loaded.");
 
@@ -182,6 +183,10 @@ impl ControllerRegistry {
                 Err(err) => {
                     CLIResponse::Error(format!("Failed to reload service \"{name}\": {err}"))
                 }
+            },
+            CLICommand::ReloadAll => match self.load_from_disk().await {
+                Ok(_) => CLIResponse::Success("Reloaded all services".into()),
+                Err(err) => CLIResponse::Error(format!("Failed to reload all services: {err}")),
             },
             CLICommand::Config(name) => {
                 match self

@@ -12,12 +12,12 @@ pub const CONTROL_SOCKET_ADDRESS: &str = "127.0.0.1:1717";
 pub const WORKER_SOCKET_ADDRESS: &str = "127.0.0.1:1718";
 
 #[cfg(target_os = "android")]
-pub const CONFIG_DIR: &str = "/data/local/tmp/jailbreak_units/";
+pub const CONFIG_DIR: &str = "/sdcard/penumbra/etc/pinitd/system/";
 #[cfg(not(target_os = "android"))]
 pub const CONFIG_DIR: &str = "test_data/jailbreak_units/";
 
 #[cfg(target_os = "android")]
-pub const STATE_FILE: &str = "/data/local/tmp/pinitd/pinitd.state";
+pub const STATE_FILE: &str = "/sdcard/penumbra/etc/pinitd/pinitd.state";
 #[cfg(not(target_os = "android"))]
 pub const STATE_FILE: &str = "test_data/pinitd/pinitd.state";
 

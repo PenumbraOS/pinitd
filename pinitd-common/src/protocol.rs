@@ -10,6 +10,7 @@ pub enum CLICommand {
     Enable(String),
     Disable(String),
     Reload(String),
+    ReloadAll,
     Status(String),
     Config(String),
     List,

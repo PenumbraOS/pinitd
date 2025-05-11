@@ -33,8 +33,10 @@ enum Commands {
     Enable { name: String },
     /// Disable a service (prevent autostart)
     Disable { name: String },
-    /// Reload a service config
+    /// Reload a service config from disk
     Reload { name: String },
+    /// Reload all service configs from disk
+    ReloadAll,
     /// Show status of a specific service
     Status { name: String },
     /// Show the current configuration of a service
@@ -56,6 +58,7 @@ async fn main() -> Result<()> {
         Commands::Enable { name } => CLICommand::Enable(name),
         Commands::Disable { name } => CLICommand::Disable(name),
         Commands::Reload { name } => CLICommand::Reload(name),
+        Commands::ReloadAll => CLICommand::ReloadAll,
         Commands::Status { name } => CLICommand::Status(name),
         Commands::Config { name } => CLICommand::Config(name),
         Commands::List => CLICommand::List,
