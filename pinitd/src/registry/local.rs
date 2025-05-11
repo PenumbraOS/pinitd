@@ -94,8 +94,11 @@ impl LocalRegistry {
             .ok_or_else(|| Error::UnknownServiceError(name.to_string()))?;
         let mut service = SyncedService::from(service, connection);
         let result = func(&mut service)?;
+        let service = service.sendable();
         // Don't await update; we want it to not block current command
-        let _ = service.send_update_if_necessary();
+        tokio::spawn(async move {
+            let _ = service.send_update_if_necessary().await;
+        });
         Ok(result)
     }
 
@@ -127,7 +130,7 @@ impl LocalRegistry {
         let inner_registry = self.clone();
         tokio::spawn(async move {
             loop {
-                info!("Starting process\"{name}\"");
+                info!("Starting process \"{name}\"");
                 if let Ok((code, message)) =
                     inner_registry.perform_command(inner_name.clone()).await
                 {

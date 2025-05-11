@@ -20,6 +20,15 @@ pub struct Service {
     monitor_task: Option<JoinHandle<()>>,
 }
 
+impl Clone for Service {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            monitor_task: None,
+        }
+    }
+}
+
 impl Service {
     pub fn new(config: ServiceConfig, state: ServiceRunState, enabled: bool) -> Self {
         Self {
@@ -77,17 +86,11 @@ impl<'a> SyncedService<'a> {
         }
     }
 
-    pub async fn send_update_if_necessary(&self) -> Result<()> {
-        if !self.did_change {
-            return Ok(());
-        }
-
-        if let Some(connection) = &self.connection {
-            connection
-                .write_response(WorkerResponse::ServiceUpdate(self.service.inner.clone()))
-                .await
-        } else {
-            Ok(())
+    pub fn sendable(self) -> SendableService {
+        SendableService {
+            service: self.service.clone(),
+            did_change: self.did_change,
+            connection: self.connection,
         }
     }
 
@@ -130,5 +133,28 @@ impl<'a> SyncedService<'a> {
 
     pub fn monitor_task(&self) -> Option<&JoinHandle<()>> {
         self.service.monitor_task.as_ref()
+    }
+}
+
+pub struct SendableService {
+    service: Service,
+    did_change: bool,
+    connection: Option<ControllerConnection>,
+}
+
+impl SendableService {
+    pub async fn send_update_if_necessary(&self) -> Result<()> {
+        if !self.did_change {
+            return Ok(());
+        }
+
+        if let Some(connection) = &self.connection {
+            connection
+                .write_response(WorkerResponse::ServiceUpdate(self.service.inner.clone()))
+                .await
+        } else {
+            info!("Cannot send update; no controller connection");
+            Ok(())
+        }
     }
 }
