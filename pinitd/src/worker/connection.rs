@@ -1,7 +1,8 @@
-use std::{sync::Arc, time::Duration};
+use std::{error::Error, sync::Arc, time::Duration};
 
 use pinitd_common::WORKER_SOCKET_ADDRESS;
 use tokio::{
+    io,
     net::{
         TcpListener, TcpStream,
         tcp::{OwnedReadHalf, OwnedWriteHalf},
@@ -14,10 +15,7 @@ use tokio::{
     time::{sleep, timeout},
 };
 
-use crate::{
-    error::{Error, Result},
-    types::BaseService,
-};
+use crate::{error::Result, types::BaseService};
 
 use super::protocol::{WorkerCommand, WorkerRead, WorkerResponse, WorkerWrite};
 
@@ -133,6 +131,17 @@ impl WorkerConnection {
                         }
                     }
                     Err(err) => {
+                        if !connection.is_connected() {
+                            return;
+                        }
+                        if let Some(source) = err.source() {
+                            if let Some(err) = source.downcast_ref::<io::Error>() {
+                                if err.kind() == io::ErrorKind::UnexpectedEof {
+                                    // Connection lost, abort
+                                    return;
+                                }
+                            }
+                        }
                         error!("Failed to read from worker: {err}");
                         sleep(Duration::from_millis(1000)).await;
                     }
@@ -153,7 +162,9 @@ impl WorkerConnection {
 
             match self.read.lock().await.recv().await {
                 Some(response) => Ok(response),
-                None => Err(Error::WorkerProtocolError("Connection closed".into())),
+                None => Err(crate::error::Error::WorkerProtocolError(
+                    "Connection closed".into(),
+                )),
             }
         })
         .await
@@ -161,7 +172,7 @@ impl WorkerConnection {
             Ok(Ok(response)) => {
                 if let WorkerResponse::Error(err) = response {
                     // Convert into local error
-                    Err(Error::WorkerProtocolError(err))
+                    Err(crate::error::Error::WorkerProtocolError(err))
                 } else {
                     Ok(response)
                 }
