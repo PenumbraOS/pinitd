@@ -58,11 +58,9 @@ where
 
     stream.read_exact(&mut len_bytes).await?;
     let len = LengthType::from_le_bytes(len_bytes);
-    info!("Reading len {len}");
 
     let mut buffer = vec![0; len as usize];
     stream.read_exact(&mut buffer).await?;
-    info!("Read bytes {buffer:?}");
 
     let (result, _) = T::decode(&buffer)?;
     Ok(result)
@@ -75,8 +73,6 @@ where
 {
     async fn write(self, stream: &mut S) -> Result<()> {
         let buffer = self.encode()?;
-
-        info!("Writing {buffer:?}");
 
         let len_bytes = (buffer.len() as LengthType).to_le_bytes();
         stream.write_all(&len_bytes).await?;
