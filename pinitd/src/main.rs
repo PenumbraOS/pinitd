@@ -2,7 +2,7 @@
 extern crate log as base_log;
 extern crate ai_pin_logger;
 
-use std::path::PathBuf;
+use std::env;
 
 #[cfg(target_os = "android")]
 use ai_pin_logger::Config;
@@ -50,7 +50,7 @@ async fn main() {
     // Purposefully don't initialize logging until we need it, so we can specialize it for the process in question
     match run().await {
         Err(e) => {
-            init_logging_with_tag("unspecialized".into());
+            init_logging_with_tag("pinitd-unspecialized".into());
             error!("{e}")
         }
         _ => (),
@@ -77,9 +77,9 @@ async fn run() -> Result<()> {
             Ok(WorkerProcess::specialize().await?)
         }
         Args::BuildPayload(_) => {
-            init_logging_with_tag("build".into());
+            init_logging_with_tag("pinitd-build".into());
             info!("Building init payload only");
-            let payload = init_payload("/data/local/tmp/pinitd".into())?;
+            let payload = init_payload()?;
             // Write to stdout
             print!("{payload}");
             Ok(())
@@ -102,7 +102,9 @@ fn init_logging_with_tag(tag: String) {
     // let _ = SimpleLogger::new().init();
 }
 
-fn init_payload(executable: PathBuf) -> Result<String> {
+fn init_payload() -> Result<String> {
+    let executable = env::current_exe()?;
+
     Ok(payload(
         2000,
         "/data/local/tmp/",

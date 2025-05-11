@@ -49,6 +49,16 @@ impl Clone for ControllerRegistryWorker {
     }
 }
 
+impl ControllerRegistryWorker {
+    fn new_disconnected() -> Self {
+        let (status_tx, status_rx) = broadcast::channel(10);
+        ControllerRegistryWorker::Disconnected {
+            status_tx,
+            status_rx,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ControllerRegistry {
     local: LocalRegistry,
@@ -56,7 +66,7 @@ pub struct ControllerRegistry {
 }
 
 impl ControllerRegistry {
-    pub async fn new(remote: WorkerConnection) -> Result<Self> {
+    pub async fn new() -> Result<Self> {
         let state = StoredState::load().await?;
         info!("Loaded enabled state for: {:?}", state.enabled_services);
 
@@ -64,7 +74,7 @@ impl ControllerRegistry {
         let local = LocalRegistry::controller(state)?;
         Ok(Self {
             local,
-            remote: Arc::new(Mutex::new(ControllerRegistryWorker::Connected(remote))),
+            remote: Arc::new(Mutex::new(ControllerRegistryWorker::new_disconnected())),
         })
     }
 
@@ -205,11 +215,7 @@ impl ControllerRegistry {
                 let _ = status_tx.send(connection);
             }
             WorkerConnectionStatus::Disconnected => {
-                let (status_tx, status_rx) = broadcast::channel(10);
-                *lock = ControllerRegistryWorker::Disconnected {
-                    status_tx,
-                    status_rx,
-                }
+                *lock = ControllerRegistryWorker::new_disconnected();
             }
         }
     }

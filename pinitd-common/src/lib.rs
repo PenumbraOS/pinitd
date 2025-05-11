@@ -16,9 +16,11 @@ pub const CONFIG_DIR: &str = "/data/local/tmp/jailbreak_units/";
 pub const CONFIG_DIR: &str = "test_data/jailbreak_units/";
 
 #[cfg(target_os = "android")]
-pub const STATE_FILE: &str = "/data/local/tmp/pinitd/initd.state";
+pub const STATE_FILE: &str = "/data/local/tmp/pinitd/pinitd.state";
 #[cfg(not(target_os = "android"))]
-pub const STATE_FILE: &str = "test_data/pinitd/initd.state";
+pub const STATE_FILE: &str = "test_data/pinitd/pinitd.state";
+
+pub const PACKAGE_NAME: &str = "im.agg.pinitd";
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum ServiceRunState {
