@@ -6,6 +6,7 @@ use std::{
 
 pub mod bincode;
 pub mod protocol;
+pub mod unit;
 
 pub const CONTROL_SOCKET_ADDRESS: &str = "127.0.0.1:1717";
 pub const WORKER_SOCKET_ADDRESS: &str = "127.0.0.1:1718";

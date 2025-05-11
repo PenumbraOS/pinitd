@@ -1,10 +1,9 @@
-use pinitd_common::{ServiceRunState, ServiceStatus};
+use pinitd_common::{ServiceRunState, ServiceStatus, unit::ServiceConfig};
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
 
 use crate::{
     error::Result,
-    unit::ServiceConfig,
     worker::{connection::ControllerConnection, protocol::WorkerResponse},
 };
 

@@ -1,13 +1,12 @@
 use std::collections::HashMap;
 
-use pinitd_common::{ServiceRunState, bincode::Bincodable};
+use pinitd_common::{ServiceRunState, bincode::Bincodable, unit::ServiceConfig};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::{
     error::{Error, Result},
     types::BaseService,
-    unit::ServiceConfig,
 };
 
 #[derive(Serialize, Deserialize, Debug)]

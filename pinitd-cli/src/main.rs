@@ -37,6 +37,8 @@ enum Commands {
     Reload { name: String },
     /// Show status of a specific service
     Status { name: String },
+    /// Show the current configuration of a service
+    Config { name: String },
     /// List all known services and their status
     List,
     /// Request the daemon to shut down gracefully
@@ -55,6 +57,7 @@ async fn main() -> Result<()> {
         Commands::Disable { name } => CLICommand::Disable(name),
         Commands::Reload { name } => CLICommand::Reload(name),
         Commands::Status { name } => CLICommand::Status(name),
+        Commands::Config { name } => CLICommand::Config(name),
         Commands::List => CLICommand::List,
         Commands::Shutdown => CLICommand::Shutdown,
     };
@@ -95,6 +98,17 @@ async fn main() -> Result<()> {
                 println!("No services configured");
             } else {
                 print_status(&list);
+            }
+            Ok(())
+        }
+        CLIResponse::Config(config) => {
+            println!("Name: {}", config.name);
+            println!("Command: {}", config.command);
+            println!("UID: {:?}", config.uid);
+            println!("Autostart: {}", config.autostart);
+            println!("Restart: {:?}", config.restart);
+            if let Some(nice_name) = config.nice_name {
+                println!("NiceName: {nice_name}");
             }
             Ok(())
         }

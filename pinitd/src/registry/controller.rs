@@ -3,6 +3,7 @@ use std::{path::Path, sync::Arc};
 use pinitd_common::{
     CONFIG_DIR, ServiceRunState, ServiceStatus, UID,
     protocol::{CLICommand, CLIResponse},
+    unit::ServiceConfig,
 };
 use tokio::{
     fs,
@@ -17,7 +18,7 @@ use crate::{
     error::{Error, Result},
     state::StoredState,
     types::{BaseService, Service},
-    unit::ServiceConfig,
+    unit::ParsableServiceConfig,
     worker::{
         connection::{WorkerConnection, WorkerConnectionStatus},
         protocol::{WorkerCommand, WorkerResponse},
@@ -182,6 +183,18 @@ impl ControllerRegistry {
                     CLIResponse::Error(format!("Failed to reload service \"{name}\": {err}"))
                 }
             },
+            CLICommand::Config(name) => {
+                match self
+                    .local
+                    .with_service(&name, |service| Ok(service.config().clone()))
+                    .await
+                {
+                    Ok(config) => CLIResponse::Config(config),
+                    Err(err) => {
+                        CLIResponse::Error(format!("Failed to find service \"{name}\": {err}"))
+                    }
+                }
+            }
             CLICommand::Status(name) => match self.service_status(name).await {
                 Ok(status) => CLIResponse::Status(status),
                 Err(err) => CLIResponse::Error(err.to_string()),

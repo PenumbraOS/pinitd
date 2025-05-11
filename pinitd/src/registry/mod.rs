@@ -1,6 +1,6 @@
-use pinitd_common::ServiceStatus;
+use pinitd_common::{ServiceStatus, unit::ServiceConfig};
 
-use crate::{error::Result, unit::ServiceConfig};
+use crate::error::Result;
 
 pub mod controller;
 pub mod local;

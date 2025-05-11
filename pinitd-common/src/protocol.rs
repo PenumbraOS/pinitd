@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{ServiceStatus, bincode::Bincodable};
+use crate::{ServiceStatus, bincode::Bincodable, unit::ServiceConfig};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum CLICommand {
@@ -11,6 +11,7 @@ pub enum CLICommand {
     Disable(String),
     Reload(String),
     Status(String),
+    Config(String),
     List,
     Shutdown,
 }
@@ -21,6 +22,7 @@ pub enum CLIResponse {
     Error(String),
     Status(ServiceStatus),
     List(Vec<ServiceStatus>),
+    Config(ServiceConfig),
     ShuttingDown,
 }
 

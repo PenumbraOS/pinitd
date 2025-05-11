@@ -1,47 +1,20 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use ini::Ini;
-use pinitd_common::UID;
-use serde::{Deserialize, Serialize};
+use pinitd_common::{
+    UID,
+    unit::{RestartPolicy, ServiceConfig},
+};
 use tokio::fs;
 
 use crate::error::{Error, Result};
 
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
-pub enum RestartPolicy {
-    Always,
-    OnFailure,
-    None,
+pub trait ParsableServiceConfig {
+    async fn parse(path: &Path) -> Result<ServiceConfig>;
 }
 
-impl TryFrom<&str> for RestartPolicy {
-    type Error = Error;
-
-    fn try_from(value: &str) -> Result<Self> {
-        match value.to_ascii_lowercase().as_str() {
-            "always" => Ok(Self::Always),
-            "on-failure" => Ok(Self::OnFailure),
-            "none" => Ok(Self::None),
-            _ => Err(Error::ConfigError(format!(
-                "Unsupported Restart \"{value}\""
-            ))),
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct ServiceConfig {
-    pub name: String,
-    pub command: String,
-    pub autostart: bool,
-    pub restart: RestartPolicy,
-    pub uid: UID,
-    pub nice_name: Option<String>,
-    pub unit_file_path: PathBuf,
-}
-
-impl ServiceConfig {
-    pub async fn parse(path: &Path) -> Result<Self> {
+impl ParsableServiceConfig for ServiceConfig {
+    async fn parse(path: &Path) -> Result<Self> {
         let content = fs::read_to_string(path).await.or_else(|_| {
             Err(Error::Unknown(format!(
                 "Failed to read unit file {:?}",
@@ -78,7 +51,12 @@ impl ServiceConfig {
                     nice_name = Some(value.trim().into());
                 }
                 "Autostart" => autostart = value.trim().eq_ignore_ascii_case("true"),
-                "Restart" => restart = value.trim().try_into()?,
+                "Restart" => {
+                    restart = value
+                        .trim()
+                        .try_into()
+                        .map_err(|err| Error::ConfigError(err))?
+                }
                 _ => {
                     return Err(Error::ConfigError(format!(
                         "Unsupported property \"{property}\""
