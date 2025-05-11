@@ -10,7 +10,7 @@ use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
     signal::unix::{SignalKind, signal},
-    sync::{mpsc, oneshot},
+    sync::mpsc::{self, Receiver},
     task::JoinHandle,
     time::sleep,
 };
@@ -20,7 +20,10 @@ use crate::{
     error::Result,
     registry::{Registry, controller::ControllerRegistry},
     types::BaseService,
-    worker::{connection::WorkerConnection, process::WorkerProcess},
+    worker::{
+        connection::{WorkerConnection, WorkerConnectionStatus},
+        process::WorkerProcess,
+    },
 };
 
 #[derive(Clone)]
@@ -32,9 +35,13 @@ impl Controller {
     pub async fn specialize() -> Result<()> {
         create_core_directories();
 
-        let (worker_connection, worker_service_update_rx) = start_worker().await?;
+        let StartWorkerState {
+            connection,
+            worker_service_update_rx,
+            worker_connected_rx,
+        } = start_worker().await?;
 
-        let registry = ControllerRegistry::new(worker_connection).await?;
+        let registry = ControllerRegistry::new(connection).await?;
         start_worker_update_watcher(registry.clone(), worker_service_update_rx);
         let controller = Controller { registry };
 
@@ -43,6 +50,8 @@ impl Controller {
 
         let shutdown_token = CancellationToken::new();
         let shutdown_signal = setup_signal_watchers(shutdown_token.clone())?;
+
+        controller.start_worker_connection_listener(worker_connected_rx);
 
         info!("Controller started");
         let controller_clone = controller.clone();
@@ -116,9 +125,32 @@ impl Controller {
 
         Ok(response)
     }
+
+    fn start_worker_connection_listener(
+        &self,
+        mut worker_connected_rx: Receiver<WorkerConnectionStatus>,
+    ) {
+        let inner_controller = self.clone();
+        tokio::spawn(async move {
+            loop {
+                let update = await_connection_status_update(&mut worker_connected_rx).await;
+                inner_controller
+                    .clone()
+                    .registry
+                    .update_worker_connection(update)
+                    .await;
+            }
+        });
+    }
 }
 
-async fn start_worker() -> Result<(WorkerConnection, mpsc::Receiver<BaseService>)> {
+struct StartWorkerState {
+    connection: WorkerConnection,
+    worker_service_update_rx: Receiver<BaseService>,
+    worker_connected_rx: Receiver<WorkerConnectionStatus>,
+}
+
+async fn start_worker() -> Result<StartWorkerState> {
     let socket = TcpListener::bind(&WORKER_SOCKET_ADDRESS).await?;
     info!("Listening for worker");
 
@@ -128,12 +160,11 @@ async fn start_worker() -> Result<(WorkerConnection, mpsc::Receiver<BaseService>
     info!("Spawning worker sent");
 
     let (worker_service_update_tx, worker_service_update_rx) = mpsc::channel::<BaseService>(10);
-    let (worker_connected_tx, worker_connected_rx) = oneshot::channel::<WorkerConnection>();
+    let (worker_connected_tx, mut worker_connected_rx) =
+        mpsc::channel::<WorkerConnectionStatus>(10);
 
     tokio::spawn(async move {
         let mut socket = socket;
-
-        let mut worker_connected_tx = Some(worker_connected_tx);
 
         loop {
             info!("Attempting to connect to worker");
@@ -148,22 +179,46 @@ async fn start_worker() -> Result<(WorkerConnection, mpsc::Receiver<BaseService>
                 };
 
             info!("Worker connection established");
-            if let Some(tx) = worker_connected_tx {
-                let _ = tx.send(connection.clone());
-                worker_connected_tx = None;
-            }
+            let _ = worker_connected_tx
+                .send(WorkerConnectionStatus::Connected(connection.clone()))
+                .await;
 
             // Make sure connection stays available
             connection.subscribe_for_disconnect().await;
+            let _ = worker_connected_tx
+                .send(WorkerConnectionStatus::Disconnected)
+                .await;
             // Loop again and attempt to reconnect
         }
     });
 
     info!("Waiting for worker to report back");
-    let connection = worker_connected_rx.await?;
-    info!("Worker spawn message received. Continuing...");
+    loop {
+        match await_connection_status_update(&mut worker_connected_rx).await {
+            WorkerConnectionStatus::Connected(connection) => {
+                info!("Worker spawn message received. Continuing...");
+                return Ok(StartWorkerState {
+                    connection,
+                    worker_connected_rx,
+                    worker_service_update_rx,
+                });
+            }
+            WorkerConnectionStatus::Disconnected => {
+                warn!(
+                    "Worker unexpectedly disconnected before first connection. Awaiting connection..."
+                );
+            }
+        }
+    }
+}
 
-    Ok((connection, worker_service_update_rx))
+async fn await_connection_status_update(
+    worker_connected_rx: &mut Receiver<WorkerConnectionStatus>,
+) -> WorkerConnectionStatus {
+    worker_connected_rx
+        .recv()
+        .await
+        .unwrap_or_else(|| WorkerConnectionStatus::Disconnected)
 }
 
 fn start_worker_update_watcher(
@@ -179,7 +234,7 @@ fn start_worker_update_watcher(
 
             let name = service.config.name.clone();
 
-            if let Err(err) = registry.clone().worker_service_update(service).await {
+            if let Err(err) = registry.clone().update_worker_service(service).await {
                 error!("Could not update remote service \"{name}\": {err}")
             }
         }

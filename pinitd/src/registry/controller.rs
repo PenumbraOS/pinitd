@@ -1,10 +1,16 @@
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use pinitd_common::{
     CONFIG_DIR, ServiceRunState, ServiceStatus, UID,
     protocol::{CLICommand, CLIResponse},
 };
-use tokio::fs;
+use tokio::{
+    fs,
+    sync::{
+        Mutex,
+        broadcast::{self, Receiver, Sender},
+    },
+};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -13,17 +19,40 @@ use crate::{
     types::{BaseService, Service},
     unit::ServiceConfig,
     worker::{
-        connection::WorkerConnection,
+        connection::{WorkerConnection, WorkerConnectionStatus},
         protocol::{WorkerCommand, WorkerResponse},
     },
 };
 
 use super::{Registry, local::LocalRegistry};
 
+enum ControllerRegistryWorker {
+    Connected(WorkerConnection),
+    Disconnected {
+        status_tx: Sender<WorkerConnection>,
+        status_rx: Receiver<WorkerConnection>,
+    },
+}
+
+impl Clone for ControllerRegistryWorker {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Connected(arg0) => Self::Connected(arg0.clone()),
+            Self::Disconnected {
+                status_tx,
+                status_rx,
+            } => Self::Disconnected {
+                status_tx: status_tx.clone(),
+                status_rx: status_rx.resubscribe(),
+            },
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ControllerRegistry {
     local: LocalRegistry,
-    remote: WorkerConnection,
+    remote: Arc<Mutex<ControllerRegistryWorker>>,
 }
 
 impl ControllerRegistry {
@@ -33,7 +62,10 @@ impl ControllerRegistry {
 
         info!("Loading service configurations from {}", CONFIG_DIR);
         let local = LocalRegistry::controller(state)?;
-        Ok(Self { local, remote })
+        Ok(Self {
+            local,
+            remote: Arc::new(Mutex::new(ControllerRegistryWorker::Connected(remote))),
+        })
     }
 
     pub async fn load_from_disk(&self) -> Result<()> {
@@ -155,11 +187,49 @@ impl ControllerRegistry {
         }
     }
 
-    pub async fn worker_service_update(&self, service: BaseService) -> Result<()> {
+    pub async fn update_worker_connection(&self, status: WorkerConnectionStatus) {
+        let mut lock = self.remote.lock().await;
+
+        match status {
+            WorkerConnectionStatus::Connected(connection) => {
+                let status_tx = match *lock {
+                    ControllerRegistryWorker::Connected(_) => unreachable!(),
+                    ControllerRegistryWorker::Disconnected { ref status_tx, .. } => {
+                        status_tx.clone()
+                    }
+                };
+                *lock = ControllerRegistryWorker::Connected(connection.clone());
+                // Ensure lock is released
+                drop(lock);
+                let _ = status_tx.send(connection);
+            }
+            WorkerConnectionStatus::Disconnected => {
+                let (status_tx, status_rx) = broadcast::channel(10);
+                *lock = ControllerRegistryWorker::Disconnected {
+                    status_tx,
+                    status_rx,
+                }
+            }
+        }
+    }
+
+    pub async fn update_worker_service(&self, service: BaseService) -> Result<()> {
         // We don't want to write back to worker
         self.local
             .internal_insert_service(Service::from(service))
             .await
+    }
+
+    async fn remote_connection(&self) -> Result<WorkerConnection> {
+        match self.remote.lock().await.clone() {
+            ControllerRegistryWorker::Connected(connection) => Ok(connection),
+            ControllerRegistryWorker::Disconnected { mut status_rx, .. } => {
+                match status_rx.recv().await {
+                    Ok(connection) => Ok(connection),
+                    Err(err) => Err(Error::WorkerConnectionRecvError(err)),
+                }
+            }
+        }
     }
 
     async fn load_unit_config(&self, path: &Path) -> Result<ServiceConfig> {
@@ -185,7 +255,8 @@ impl Registry for ControllerRegistry {
         self.local.insert_unit(config.clone(), enabled).await?;
 
         if config.uid == UID::System {
-            self.remote
+            self.remote_connection()
+                .await?
                 .write_command(WorkerCommand::Create(config))
                 .await?;
         }
@@ -198,7 +269,8 @@ impl Registry for ControllerRegistry {
 
         if removed_local && !self.local.is_shell_service(&name).await? {
             let response = self
-                .remote
+                .remote_connection()
+                .await?
                 .write_command(WorkerCommand::Destroy(name))
                 .await?;
             Ok(response == WorkerResponse::Success)
@@ -229,7 +301,8 @@ impl Registry for ControllerRegistry {
             self.local.service_start(name).await
         } else {
             let result = self
-                .remote
+                .remote_connection()
+                .await?
                 .write_command(WorkerCommand::Start(name))
                 .await?;
             Ok(result == WorkerResponse::Success)
@@ -240,7 +313,10 @@ impl Registry for ControllerRegistry {
         if self.local.is_shell_service(&name).await? {
             self.local.service_stop(name).await
         } else {
-            self.remote.write_command(WorkerCommand::Stop(name)).await?;
+            self.remote_connection()
+                .await?
+                .write_command(WorkerCommand::Stop(name))
+                .await?;
             Ok(())
         }
     }
@@ -249,7 +325,8 @@ impl Registry for ControllerRegistry {
         if self.local.is_shell_service(&name).await? {
             self.local.service_restart(name).await
         } else {
-            self.remote
+            self.remote_connection()
+                .await?
                 .write_command(WorkerCommand::Restart(name))
                 .await?;
             Ok(())
@@ -273,7 +350,10 @@ impl Registry for ControllerRegistry {
     }
 
     async fn shutdown(&self) -> Result<()> {
-        self.remote.write_command(WorkerCommand::Shutdown).await?;
+        self.remote_connection()
+            .await?
+            .write_command(WorkerCommand::Shutdown)
+            .await?;
         Ok(())
     }
 }

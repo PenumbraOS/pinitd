@@ -21,6 +21,11 @@ use crate::{
 
 use super::protocol::{WorkerCommand, WorkerRead, WorkerResponse, WorkerWrite};
 
+pub enum WorkerConnectionStatus {
+    Connected(WorkerConnection),
+    Disconnected,
+}
+
 /// Connection held by Controller to transfer data to/from Worker
 #[derive(Clone)]
 pub struct WorkerConnection {
