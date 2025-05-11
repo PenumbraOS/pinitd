@@ -94,7 +94,8 @@ impl LocalRegistry {
             .ok_or_else(|| Error::UnknownServiceError(name.to_string()))?;
         let mut service = SyncedService::from(service, connection);
         let result = func(&mut service)?;
-        service.send_update_if_necessary().await?;
+        // Don't await update; we want it to not block current command
+        let _ = service.send_update_if_necessary();
         Ok(result)
     }
 
@@ -433,6 +434,8 @@ fn service_stop_internal(name: &str, service: &mut SyncedService) {
             let result = unsafe { kill(pid, SIGTERM) };
             if result != 0 {
                 warn!("Failed to send SIGTERM to pid {pid}: result {result}");
+            } else {
+                info!("SIGTERM succeeded on pid {pid}");
             }
             // If we have a handle, attempt to kill via handle
             if let Some(handle) = service.monitor_task() {
