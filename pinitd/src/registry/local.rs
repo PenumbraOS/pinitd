@@ -1,4 +1,4 @@
-use std::{collections::HashMap, future::ready, process::Stdio, sync::Arc, time::Duration};
+use std::{collections::HashMap, future::ready, sync::Arc, time::Duration};
 
 use nix::libc::{SIGTERM, kill};
 use pinitd_common::{
@@ -6,7 +6,6 @@ use pinitd_common::{
     unit::{RestartPolicy, ServiceConfig},
 };
 use tokio::{
-    process::Command,
     sync::{Mutex, MutexGuard},
     task::JoinHandle,
     time::sleep,
@@ -14,6 +13,7 @@ use tokio::{
 
 use crate::{
     error::{Error, Result},
+    registry::spawn::SpawnCommand,
     state::StoredState,
     types::{Service, SyncedService},
     worker::connection::ControllerConnection,
@@ -133,8 +133,10 @@ impl LocalRegistry {
         tokio::spawn(async move {
             loop {
                 info!("Starting process \"{name}\"");
-                if let Ok((code, message)) =
-                    inner_registry.perform_command(inner_name.clone()).await
+                if let Ok(SpawnCommand {
+                    exit_code,
+                    exit_message,
+                }) = SpawnCommand::spawn(inner_registry.clone(), inner_name.clone()).await
                 {
                     let mut expected_stop = false;
 
@@ -149,9 +151,9 @@ impl LocalRegistry {
                     if !inner_registry
                         .stop_and_should_restart(
                             inner_name.clone(),
-                            code != 0,
+                            exit_code != 0,
                             expected_stop,
-                            message,
+                            exit_message,
                         )
                         .await
                     {
@@ -167,69 +169,6 @@ impl LocalRegistry {
                 }
             }
         })
-    }
-
-    async fn perform_command(&self, name: String) -> Result<(i32, String)> {
-        let config = self
-            .with_service(&name, |service| Ok(service.config().clone()))
-            .await?;
-
-        info!("Spawning process for {name}: {}", config.command);
-
-        let child = Command::new("sh")
-            .args(&["-c", &config.command])
-            // TODO: Auto pipe output to Android log?
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            // Make sure we clean up if we die
-            .kill_on_drop(true)
-            .spawn();
-
-        match child {
-            Ok(mut child) => {
-                let pid = child.id().ok_or_else(|| {
-                    Error::Unknown(format!("Failed to get PID for spawned process \"{name}\"",))
-                })? as i32;
-                info!("Service \"{name}\" spawned successfully with PID: {pid}",);
-
-                self.with_service_mut(&name, |service| {
-                    service.set_state(ServiceRunState::Running { pid });
-                    Ok(())
-                })
-                .await?;
-
-                info!("Monitoring task started for service \"{name}\"");
-                let (exit_code, exit_message) = match child.wait().await {
-                    Ok(status) => {
-                        info!("Process for service \"{name}\" exited with status: {status}",);
-                        status.code().map_or_else(
-                            || (127, "Exited via signal".to_string()),
-                            |code| (code, format!("Exited with code {code}")),
-                        )
-                    }
-                    Err(err) => {
-                        error!("Error waiting on process for service \"{name}\": {err}");
-                        (127, format!("Wait error: {err}"))
-                    }
-                };
-
-                info!("Monitoring task finished for service \"{name}\"");
-
-                Ok((exit_code, exit_message))
-            }
-            Err(err) => {
-                let error_msg = format!("Failed to spawn process for \"{name}\": {err}");
-                error!("{}", error_msg);
-                self.with_service_mut(&name, |service| {
-                    service.set_state(ServiceRunState::Failed {
-                        reason: error_msg.clone(),
-                    });
-                    Ok(())
-                })
-                .await?;
-                Err(Error::Unknown(error_msg))
-            }
-        }
     }
 
     async fn stop_and_should_restart(

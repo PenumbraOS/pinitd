@@ -30,6 +30,8 @@ pub enum Error {
     ConfigError(String),
     #[error("Failed to parse persistent state: {0}")]
     ParseStateError(#[from] serde_json::Error),
+    #[error("Error spawning process: {0}")]
+    ProcessSpawnError(String),
     #[error("Unknown error {0}")]
     Unknown(String),
 }

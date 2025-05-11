@@ -41,7 +41,7 @@ where
     async fn read(stream: &mut S) -> Result<Self> {
         match read_internal(stream).await {
             Ok(result) => Ok(result),
-            Err(err) => Err(Error::WorkerProtocolError(err.to_string())),
+            Err(err) => Err(err),
         }
     }
 }

@@ -4,6 +4,7 @@ use crate::error::Result;
 
 pub mod controller;
 pub mod local;
+pub mod spawn;
 
 pub trait Registry {
     async fn service_names(&self) -> Result<Vec<String>>;
