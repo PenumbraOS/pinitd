@@ -144,6 +144,7 @@ impl ControllerRegistry {
                 }
             },
             CLICommand::Stop(name) => match self.service_stop(name.clone()).await {
+                // TODO: This says "stop initiated even if the service wasn't running"
                 Ok(_) => CLIResponse::Success(format!("Service \"{name}\" stop initiated.")),
                 Err(err) => CLIResponse::Error(format!("Failed to stop service \"{name}\": {err}")),
             },

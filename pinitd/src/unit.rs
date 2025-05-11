@@ -36,6 +36,7 @@ pub struct ServiceConfig {
     pub autostart: bool,
     pub restart: RestartPolicy,
     pub uid: UID,
+    pub nice_name: Option<String>,
     pub unit_file_path: PathBuf,
 }
 
@@ -57,6 +58,7 @@ impl ServiceConfig {
         let mut name = None;
         let mut command = None;
         let mut uid = UID::Shell;
+        let mut nice_name = None;
         let mut autostart = false;
         let mut restart = RestartPolicy::None;
 
@@ -71,6 +73,9 @@ impl ServiceConfig {
                         .trim()
                         .try_into()
                         .map_err(|err| Error::ConfigError(err))?
+                }
+                "NiceName" => {
+                    nice_name = Some(value.trim().into());
                 }
                 "Autostart" => autostart = value.trim().eq_ignore_ascii_case("true"),
                 "Restart" => restart = value.trim().try_into()?,
@@ -102,10 +107,17 @@ impl ServiceConfig {
             return Err(Error::ConfigError("\"Exec\" must be provided".into()));
         };
 
+        if nice_name.is_some() && uid != UID::System {
+            return Err(Error::ConfigError(format!(
+                "\"NiceName\" is set with a non-1000 UID. This is not currently supported"
+            )));
+        }
+
         Ok(Self {
             name,
             command,
             uid,
+            nice_name,
             autostart,
             restart,
             unit_file_path: path.to_path_buf(),
