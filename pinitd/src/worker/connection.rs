@@ -11,7 +11,7 @@ use tokio::{
         watch::{self, Receiver},
     },
     task::JoinHandle,
-    time::timeout,
+    time::{sleep, timeout},
 };
 
 use crate::{
@@ -31,7 +31,9 @@ pub enum WorkerConnectionStatus {
 pub struct WorkerConnection {
     connection: Connection,
     read: Arc<Mutex<mpsc::Receiver<WorkerResponse>>>,
-    read_loop: Arc<Mutex<JoinHandle<()>>>,
+    _read_loop: Arc<Mutex<JoinHandle<()>>>,
+    // When set, ignore socket errors as we're shutting down
+    in_shutdown: bool,
 }
 
 /// Connection held by Worker to transfer data to/from Controller
@@ -102,7 +104,8 @@ impl WorkerConnection {
         Ok(WorkerConnection {
             connection,
             read: Arc::new(Mutex::new(read_rx)),
-            read_loop: Arc::new(Mutex::new(read_loop)),
+            _read_loop: Arc::new(Mutex::new(read_loop)),
+            in_shutdown: false,
         })
     }
 
@@ -131,6 +134,7 @@ impl WorkerConnection {
                     }
                     Err(err) => {
                         error!("Failed to read from worker: {err}");
+                        sleep(Duration::from_millis(1000)).await;
                     }
                 }
             }
@@ -141,16 +145,16 @@ impl WorkerConnection {
         match timeout(Duration::from_millis(200), async move {
             info!("Sending worker command");
             let mut write = self.connection.write.lock().await;
-            command
-                .write(&mut *write)
-                .await
-                .map(|_| async {
-                    match self.read.lock().await.recv().await {
-                        Some(response) => Ok(response),
-                        None => Err(Error::WorkerProtocolError("Connection closed".into())),
-                    }
-                })?
-                .await
+            command.write(&mut *write).await?;
+
+            if self.in_shutdown {
+                return Ok(WorkerResponse::ShuttingDown);
+            }
+
+            match self.read.lock().await.recv().await {
+                Some(response) => Ok(response),
+                None => Err(Error::WorkerProtocolError("Connection closed".into())),
+            }
         })
         .await
         {
@@ -180,6 +184,11 @@ impl WorkerConnection {
 
     pub async fn subscribe_for_disconnect(&mut self) {
         self.connection.subscribe_for_disconnect().await;
+    }
+
+    pub async fn shutdown(&mut self) {
+        self.in_shutdown = true;
+        self._read_loop.lock().await.abort();
     }
 }
 

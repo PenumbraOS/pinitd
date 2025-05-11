@@ -350,10 +350,9 @@ impl Registry for ControllerRegistry {
     }
 
     async fn shutdown(&self) -> Result<()> {
-        self.remote_connection()
-            .await?
-            .write_command(WorkerCommand::Shutdown)
-            .await?;
+        let mut connection = self.remote_connection().await?;
+        connection.shutdown().await;
+        connection.write_command(WorkerCommand::Shutdown).await?;
         Ok(())
     }
 }
