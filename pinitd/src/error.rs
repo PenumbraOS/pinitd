@@ -32,6 +32,8 @@ pub enum Error {
     ParseStateError(#[from] serde_json::Error),
     #[error("Error spawning process: {0}")]
     ProcessSpawnError(String),
+    #[error("Exploit error: {0}")]
+    ExploitError(#[from] android_31317_exploit::error::Error),
     #[error("Unknown error {0}")]
     Unknown(String),
 }

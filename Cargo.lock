@@ -43,6 +43,7 @@ dependencies = [
  "clap",
  "log",
  "simple_logger",
+ "thiserror",
  "tokio",
 ]
 

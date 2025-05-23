@@ -64,7 +64,7 @@ impl WorkerProcess {
     /// Spawn a remote process to act as the system worker
     #[cfg(target_os = "android")]
     pub async fn spawn() -> Result<()> {
-        use android_31317_exploit::exploit::{ExploitKind, TriggerApp, build_and_execute};
+        use android_31317_exploit::{ExploitKind, TriggerApp, build_and_execute};
         use std::env;
 
         let path = env::current_exe()?;

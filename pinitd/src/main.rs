@@ -6,7 +6,7 @@ use std::env;
 
 #[cfg(target_os = "android")]
 use ai_pin_logger::Config;
-use android_31317_exploit::exploit::{ExploitKind, payload};
+use android_31317_exploit::{ExploitKind, payload};
 use base_log::LevelFilter;
 use clap::Parser;
 use controller::Controller;

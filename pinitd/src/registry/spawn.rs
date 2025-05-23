@@ -1,7 +1,7 @@
 use std::{future, process::Stdio};
 
 use crate::error::{Error, Result};
-use android_31317_exploit::exploit::{ExploitKind, TriggerApp, build_and_execute};
+use android_31317_exploit::{ExploitKind, TriggerApp, build_and_execute};
 use pinitd_common::{ServiceRunState, UID, unit::ServiceConfig};
 use tokio::process::{Child, Command};
 
