@@ -14,6 +14,7 @@ use error::Result;
 #[cfg(not(target_os = "android"))]
 use simple_logger::SimpleLogger;
 use worker::process::WorkerProcess;
+use wrapper::Wrapper;
 use zygote::extract_and_write_fd;
 
 mod controller;
@@ -25,6 +26,7 @@ mod state;
 mod types;
 mod unit_config;
 mod worker;
+mod wrapper;
 mod zygote;
 
 /// Custom init system for Ai Pin
@@ -37,6 +39,18 @@ enum Args {
     Worker(NoAdditionalArgs),
     /// Create custom exploit payload. NOTE: This is for internal use; rely on the pinitd for launching other processes
     BuildPayload(NoAdditionalArgs),
+    /// Write the correct Zygote pid fd back on spawn and perform process monitoring of the child process. NOTE: This is for internal use; rely on the pinitd for launching other processes
+    #[command(name = "wrapper")]
+    ZygoteSpawnWrapper(WrapperArgs),
+}
+
+#[derive(Parser, Debug)]
+struct WrapperArgs {
+    #[arg(index = 1)]
+    command: String,
+
+    #[arg(index = 2, trailing_var_arg = true, allow_hyphen_values = true)]
+    _remaining_args: Vec<String>,
 }
 
 #[derive(Parser, Debug)]
@@ -58,6 +72,8 @@ async fn main() {
 }
 
 async fn run() -> Result<()> {
+    // TODO: If we panic before initializing the logging system, we just crash without any messages
+    #[cfg(target_os = "android")]
     log_panics::init();
 
     #[cfg(target_os = "android")]
@@ -83,6 +99,10 @@ async fn run() -> Result<()> {
             // Write to stdout
             print!("{payload}");
             Ok(())
+        }
+        Args::ZygoteSpawnWrapper(args) => {
+            init_logging_with_tag("pinitd-wrapper".into());
+            Ok(Wrapper::specialize(args.command).await?)
         }
     }
 }

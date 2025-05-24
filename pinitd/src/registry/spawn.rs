@@ -1,4 +1,4 @@
-use std::{future, path::PathBuf, process::Stdio, time::Duration};
+use std::{env, future, path::PathBuf, process::Stdio, time::Duration};
 
 use crate::error::{Error, Result};
 use android_31317_exploit::{ExploitKind, TriggerApp, build_and_execute};
@@ -117,6 +117,7 @@ impl InnerSpawnChild {
 
 async fn spawn_standard(config: ServiceConfig) -> Result<InnerSpawnChild> {
     let command = command_path(&config.command).await?;
+    let command = wrapper_command(&command)?;
 
     let child = Command::new("sh")
         .args(&["-c", &command])
@@ -132,6 +133,7 @@ async fn spawn_standard(config: ServiceConfig) -> Result<InnerSpawnChild> {
 
 async fn spawn_zygote_exploit(config: ServiceConfig) -> Result<InnerSpawnChild> {
     let command = command_path(&config.command).await?;
+    let command = wrapper_command(&command)?;
 
     build_and_execute(
         config.uid.into(),
@@ -151,6 +153,11 @@ async fn spawn_zygote_exploit(config: ServiceConfig) -> Result<InnerSpawnChild> 
     )?;
 
     Ok(InnerSpawnChild::ZygoteExploit)
+}
+
+fn wrapper_command(command: &str) -> Result<String> {
+    let path = env::current_exe()?;
+    Ok(format!("{} wrapper \"{command}\"", path.display()))
 }
 
 async fn command_path(command: &ServiceCommand) -> Result<String> {
