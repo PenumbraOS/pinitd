@@ -1,5 +1,6 @@
 use std::{process, time::Duration};
 
+use android_31317_exploit::force_clear_exploit;
 use pinitd_common::{
     CONTROL_SOCKET_ADDRESS, WORKER_SOCKET_ADDRESS,
     bincode::Bincodable,
@@ -35,6 +36,10 @@ impl Controller {
     pub async fn specialize() -> Result<()> {
         create_core_directories();
 
+        let _ = force_clear_exploit();
+        info!("Delaying to allow Zygote to settle");
+        sleep(Duration::from_millis(500)).await;
+
         let StartWorkerState {
             connection,
             worker_service_update_rx,
@@ -48,9 +53,6 @@ impl Controller {
 
         let shutdown_token = CancellationToken::new();
         let shutdown_signal = setup_signal_watchers(shutdown_token.clone())?;
-
-        info!("Delaying to allow Zygote to settle");
-        sleep(Duration::from_millis(500)).await;
 
         start_worker_update_watcher(controller.registry.clone(), worker_service_update_rx);
 
