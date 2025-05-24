@@ -80,6 +80,7 @@ impl WorkerProcess {
                 "com.android.settings.Settings".into(),
             ),
             None,
+            true,
         )?;
 
         Ok(())

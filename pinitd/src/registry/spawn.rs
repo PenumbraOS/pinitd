@@ -134,6 +134,7 @@ fn spawn_zygote_exploit(config: ServiceConfig) -> Result<InnerSpawnChild> {
             "com.android.settings.Settings".into(),
         ),
         config.nice_name.as_deref(),
+        true,
     )?;
 
     Ok(InnerSpawnChild::ZygoteExploit)
