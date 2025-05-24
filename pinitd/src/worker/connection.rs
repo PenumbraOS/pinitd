@@ -8,7 +8,7 @@ use tokio::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
     },
     sync::{
-        Mutex, MutexGuard, mpsc,
+        Mutex, MutexGuard, broadcast, mpsc,
         watch::{self, Receiver},
     },
     task::JoinHandle,
@@ -19,9 +19,21 @@ use crate::{error::Result, types::BaseService};
 
 use super::protocol::{WorkerCommand, WorkerRead, WorkerResponse, WorkerWrite};
 
+#[derive(Clone)]
 pub enum WorkerConnectionStatus {
     Connected(WorkerConnection),
     Disconnected,
+}
+
+impl WorkerConnectionStatus {
+    pub async fn await_update(
+        worker_connected_rx: &mut broadcast::Receiver<WorkerConnectionStatus>,
+    ) -> WorkerConnectionStatus {
+        worker_connected_rx
+            .recv()
+            .await
+            .unwrap_or_else(|_| WorkerConnectionStatus::Disconnected)
+    }
 }
 
 /// Connection held by Controller to transfer data to/from Worker

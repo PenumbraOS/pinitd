@@ -1,6 +1,10 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, process, sync::Arc, time::Duration};
 
-use tokio::select;
+use tokio::{
+    select,
+    sync::{Mutex, broadcast},
+    time::{sleep, timeout},
+};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -11,6 +15,8 @@ use crate::{
         protocol::{WorkerCommand, WorkerResponse},
     },
 };
+
+use super::connection::WorkerConnectionStatus;
 
 pub struct WorkerProcess;
 
@@ -61,9 +67,58 @@ impl WorkerProcess {
         Ok(())
     }
 
+    pub fn spawn_with_retries(
+        retry_count: usize,
+        worker_connected_rx: broadcast::Receiver<WorkerConnectionStatus>,
+    ) -> Result<()> {
+        if let Err(error) = Self::spawn() {
+            error!("Failed worker spawn {error}");
+        }
+
+        tokio::spawn(async move {
+            for i in 0..retry_count {
+                let mut inner_rx = worker_connected_rx.resubscribe();
+                let did_complete = Arc::new(Mutex::new(false));
+                let inner_did_complete = did_complete.clone();
+                let _ = timeout(Duration::from_millis(500), async move {
+                    if let WorkerConnectionStatus::Connected(_) =
+                        WorkerConnectionStatus::await_update(&mut inner_rx).await
+                    {
+                        // We've succeeded
+                        *inner_did_complete.lock().await = true;
+                    }
+                })
+                .await;
+
+                if *did_complete.lock().await {
+                    return;
+                }
+
+                let will_retry = i < retry_count - 1;
+                let retry_string = if will_retry {
+                    format!("Retrying ({}/{retry_count})", i + 1)
+                } else {
+                    "Killing".into()
+                };
+
+                error!("Failed to connect to worker. {retry_string}");
+
+                if !will_retry {
+                    process::exit(1);
+                }
+
+                sleep(Duration::from_secs(1)).await;
+
+                let _ = Self::spawn();
+            }
+        });
+
+        Ok(())
+    }
+
     /// Spawn a remote process to act as the system worker
     #[cfg(target_os = "android")]
-    pub async fn spawn() -> Result<()> {
+    fn spawn() -> Result<()> {
         use android_31317_exploit::{ExploitKind, TriggerApp, build_and_execute};
         use std::env;
 
@@ -88,7 +143,7 @@ impl WorkerProcess {
 
     /// Spawn a remote process to act as the system worker
     #[cfg(not(target_os = "android"))]
-    pub async fn spawn() -> Result<()> {
+    fn spawn() -> Result<()> {
         let process_path = std::env::args().next().unwrap();
         tokio::process::Command::new(process_path)
             .arg("worker")

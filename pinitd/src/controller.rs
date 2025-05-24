@@ -11,7 +11,7 @@ use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
     signal::unix::{SignalKind, signal},
-    sync::mpsc::{self, Receiver},
+    sync::{broadcast, mpsc},
     task::JoinHandle,
     time::sleep,
 };
@@ -136,12 +136,12 @@ impl Controller {
 
     fn start_worker_connection_listener(
         &self,
-        mut worker_connected_rx: Receiver<WorkerConnectionStatus>,
+        mut worker_connected_rx: broadcast::Receiver<WorkerConnectionStatus>,
     ) {
         let inner_controller = self.clone();
         tokio::spawn(async move {
             loop {
-                let update = await_connection_status_update(&mut worker_connected_rx).await;
+                let update = WorkerConnectionStatus::await_update(&mut worker_connected_rx).await;
                 inner_controller
                     .clone()
                     .registry
@@ -154,22 +154,23 @@ impl Controller {
 
 struct StartWorkerState {
     connection: WorkerConnection,
-    worker_service_update_rx: Receiver<BaseService>,
-    worker_connected_rx: Receiver<WorkerConnectionStatus>,
+    worker_service_update_rx: mpsc::Receiver<BaseService>,
+    worker_connected_rx: broadcast::Receiver<WorkerConnectionStatus>,
 }
 
 async fn start_worker() -> Result<StartWorkerState> {
     let socket = TcpListener::bind(&WORKER_SOCKET_ADDRESS).await?;
     info!("Listening for worker");
 
+    let (worker_connected_tx, mut worker_connected_rx) =
+        broadcast::channel::<WorkerConnectionStatus>(10);
+
     // TODO: Retry handling
     info!("Spawning worker");
-    WorkerProcess::spawn().await?;
+    WorkerProcess::spawn_with_retries(5, worker_connected_rx.resubscribe())?;
     info!("Spawning worker sent");
 
     let (worker_service_update_tx, worker_service_update_rx) = mpsc::channel::<BaseService>(10);
-    let (worker_connected_tx, mut worker_connected_rx) =
-        mpsc::channel::<WorkerConnectionStatus>(10);
 
     tokio::spawn(async move {
         let mut socket = socket;
@@ -187,22 +188,18 @@ async fn start_worker() -> Result<StartWorkerState> {
                 };
 
             info!("Worker connection established");
-            let _ = worker_connected_tx
-                .send(WorkerConnectionStatus::Connected(connection.clone()))
-                .await;
+            let _ = worker_connected_tx.send(WorkerConnectionStatus::Connected(connection.clone()));
 
             // Make sure connection stays available
             connection.subscribe_for_disconnect().await;
-            let _ = worker_connected_tx
-                .send(WorkerConnectionStatus::Disconnected)
-                .await;
+            let _ = worker_connected_tx.send(WorkerConnectionStatus::Disconnected);
             // Loop again and attempt to reconnect
         }
     });
 
     info!("Waiting for worker to report back");
     loop {
-        match await_connection_status_update(&mut worker_connected_rx).await {
+        match WorkerConnectionStatus::await_update(&mut worker_connected_rx).await {
             WorkerConnectionStatus::Connected(connection) => {
                 info!("Worker spawn message received. Continuing...");
                 return Ok(StartWorkerState {
@@ -218,15 +215,6 @@ async fn start_worker() -> Result<StartWorkerState> {
             }
         }
     }
-}
-
-async fn await_connection_status_update(
-    worker_connected_rx: &mut Receiver<WorkerConnectionStatus>,
-) -> WorkerConnectionStatus {
-    worker_connected_rx
-        .recv()
-        .await
-        .unwrap_or_else(|| WorkerConnectionStatus::Disconnected)
 }
 
 fn start_worker_update_watcher(
