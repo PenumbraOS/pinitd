@@ -1,4 +1,4 @@
-use pinitd_common::{ServiceRunState, ServiceStatus, unit::ServiceConfig};
+use pinitd_common::{ServiceRunState, ServiceStatus, unit_config::ServiceConfig};
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
 

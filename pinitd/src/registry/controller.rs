@@ -3,7 +3,7 @@ use std::{path::Path, sync::Arc};
 use pinitd_common::{
     CONFIG_DIR, ServiceRunState, ServiceStatus, UID,
     protocol::{CLICommand, CLIResponse},
-    unit::ServiceConfig,
+    unit_config::ServiceConfig,
 };
 use tokio::{
     fs,
@@ -18,7 +18,7 @@ use crate::{
     error::{Error, Result},
     state::StoredState,
     types::{BaseService, Service},
-    unit::ParsableServiceConfig,
+    unit_config::ParsableServiceConfig,
     worker::{
         connection::{WorkerConnection, WorkerConnectionStatus},
         protocol::{WorkerCommand, WorkerResponse},
@@ -292,7 +292,7 @@ impl Registry for ControllerRegistry {
     async fn remove_unit(&self, name: String) -> Result<bool> {
         let removed_local = self.local.remove_unit(name.clone()).await?;
 
-        if removed_local && !self.local.is_shell_service(&name).await? {
+        if removed_local && self.local.is_worker_service(&name).await? {
             let response = self
                 .remote_connection()
                 .await?
@@ -322,39 +322,39 @@ impl Registry for ControllerRegistry {
             return Ok(false);
         }
 
-        if self.local.is_shell_service(&name).await? {
-            self.local.service_start(name).await
-        } else {
+        if self.local.is_worker_service(&name).await? {
             let result = self
                 .remote_connection()
                 .await?
                 .write_command(WorkerCommand::Start(name))
                 .await?;
             Ok(result == WorkerResponse::Success)
+        } else {
+            self.local.service_start(name).await
         }
     }
 
     async fn service_stop(&self, name: String) -> Result<()> {
-        if self.local.is_shell_service(&name).await? {
-            self.local.service_stop(name).await
-        } else {
+        if self.local.is_worker_service(&name).await? {
             self.remote_connection()
                 .await?
                 .write_command(WorkerCommand::Stop(name))
                 .await?;
             Ok(())
+        } else {
+            self.local.service_stop(name).await
         }
     }
 
     async fn service_restart(&self, name: String) -> Result<()> {
-        if self.local.is_shell_service(&name).await? {
-            self.local.service_restart(name).await
-        } else {
+        if self.local.is_worker_service(&name).await? {
             self.remote_connection()
                 .await?
                 .write_command(WorkerCommand::Restart(name))
                 .await?;
             Ok(())
+        } else {
+            self.local.service_restart(name).await
         }
     }
 

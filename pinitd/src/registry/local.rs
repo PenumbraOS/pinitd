@@ -3,7 +3,7 @@ use std::{collections::HashMap, future::ready, sync::Arc, time::Duration};
 use nix::libc::{SIGTERM, kill};
 use pinitd_common::{
     ServiceRunState, ServiceStatus, UID,
-    unit::{RestartPolicy, ServiceConfig},
+    unit_config::{RestartPolicy, ServiceConfig},
 };
 use tokio::{
     sync::{Mutex, MutexGuard},
@@ -109,10 +109,10 @@ impl LocalRegistry {
             .await
     }
 
-    pub async fn is_shell_service(&self, name: &str) -> Result<bool> {
+    pub async fn is_worker_service(&self, name: &str) -> Result<bool> {
         self.with_service(name, |service| {
             info!("Config {:?}", service.config());
-            Ok(service.config().uid == UID::Shell)
+            Ok(service.config().uid == UID::System)
         })
         .await
     }

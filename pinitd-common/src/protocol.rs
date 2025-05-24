@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{ServiceStatus, bincode::Bincodable, unit::ServiceConfig};
+use crate::{ServiceStatus, bincode::Bincodable, unit_config::ServiceConfig};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum CLICommand {

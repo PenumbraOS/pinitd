@@ -1,13 +1,10 @@
 use std::collections::HashMap;
 
-use pinitd_common::{ServiceRunState, bincode::Bincodable, unit::ServiceConfig};
+use pinitd_common::{ServiceRunState, bincode::Bincodable, unit_config::ServiceConfig};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::{
-    error::{Error, Result},
-    types::BaseService,
-};
+use crate::{error::Result, types::BaseService};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum WorkerCommand {

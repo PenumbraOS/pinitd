@@ -6,7 +6,7 @@ use std::{
 
 pub mod bincode;
 pub mod protocol;
-pub mod unit;
+pub mod unit_config;
 
 pub const CONTROL_SOCKET_ADDRESS: &str = "127.0.0.1:1717";
 pub const WORKER_SOCKET_ADDRESS: &str = "127.0.0.1:1718";
@@ -61,8 +61,9 @@ pub fn create_core_directories() {
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub enum UID {
-    System = 1000,
-    Shell = 2000,
+    System,
+    Shell,
+    Custom(usize),
 }
 
 impl TryFrom<&str> for UID {
@@ -71,7 +72,20 @@ impl TryFrom<&str> for UID {
         match value {
             "1000" => Ok(Self::System),
             "2000" => Ok(Self::Shell),
-            _ => Err(format!("Unsupported Uid \"{value}\"")),
+            _ => match value.parse::<usize>() {
+                Ok(value) => Ok(Self::Custom(value)),
+                Err(_) => Err(format!("Unsupported Uid \"{value}\"")),
+            },
+        }
+    }
+}
+
+impl From<UID> for usize {
+    fn from(value: UID) -> Self {
+        match value {
+            UID::System => 1000,
+            UID::Shell => 2000,
+            UID::Custom(uid) => uid,
         }
     }
 }

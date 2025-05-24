@@ -23,7 +23,7 @@ mod log;
 mod registry;
 mod state;
 mod types;
-mod unit;
+mod unit_config;
 mod worker;
 mod zygote;
 

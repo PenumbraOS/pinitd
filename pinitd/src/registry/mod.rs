@@ -1,4 +1,4 @@
-use pinitd_common::{ServiceStatus, unit::ServiceConfig};
+use pinitd_common::{ServiceStatus, unit_config::ServiceConfig};
 
 use crate::error::Result;
 

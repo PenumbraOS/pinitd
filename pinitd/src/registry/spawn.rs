@@ -1,9 +1,15 @@
-use std::{future, process::Stdio};
+use std::{future, path::PathBuf, process::Stdio, time::Duration};
 
 use crate::error::{Error, Result};
 use android_31317_exploit::{ExploitKind, TriggerApp, build_and_execute};
-use pinitd_common::{ServiceRunState, UID, unit::ServiceConfig};
-use tokio::process::{Child, Command};
+use pinitd_common::{
+    ServiceRunState, UID,
+    unit_config::{ServiceCommand, ServiceConfig},
+};
+use tokio::{
+    process::{Child, Command},
+    time::timeout,
+};
 
 use super::local::LocalRegistry;
 
@@ -20,10 +26,10 @@ impl SpawnCommand {
 
         info!("Spawning process for \"{name}\": \"{}\"", config.command);
 
-        let child = if config.uid == UID::System && config.nice_name.is_some() {
-            spawn_zygote_exploit(config)
+        let child = if config.uid != UID::Shell {
+            spawn_zygote_exploit(config).await
         } else {
-            spawn_standard(config)
+            spawn_standard(config).await
         };
 
         match child {
@@ -109,9 +115,11 @@ impl InnerSpawnChild {
     }
 }
 
-fn spawn_standard(config: ServiceConfig) -> Result<InnerSpawnChild> {
+async fn spawn_standard(config: ServiceConfig) -> Result<InnerSpawnChild> {
+    let command = command_path(&config.command).await?;
+
     let child = Command::new("sh")
-        .args(&["-c", &config.command])
+        .args(&["-c", &command])
         // TODO: Auto pipe output to Android log?
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -122,13 +130,18 @@ fn spawn_standard(config: ServiceConfig) -> Result<InnerSpawnChild> {
     Ok(InnerSpawnChild::Standard(child))
 }
 
-fn spawn_zygote_exploit(config: ServiceConfig) -> Result<InnerSpawnChild> {
+async fn spawn_zygote_exploit(config: ServiceConfig) -> Result<InnerSpawnChild> {
+    let command = command_path(&config.command).await?;
+
     build_and_execute(
-        config.uid as usize,
+        config.uid.into(),
         "/data/",
         "com.android.settings",
-        "platform:system_app:targetSdkVersion=29:complete",
-        &ExploitKind::Command(config.command),
+        config.se_info.as_ref().map_or(
+            "platform:system_app:targetSdkVersion=29:complete",
+            |se_info| &se_info,
+        ),
+        &ExploitKind::Command(command),
         &TriggerApp::new(
             "com.android.settings".into(),
             "com.android.settings.Settings".into(),
@@ -138,4 +151,66 @@ fn spawn_zygote_exploit(config: ServiceConfig) -> Result<InnerSpawnChild> {
     )?;
 
     Ok(InnerSpawnChild::ZygoteExploit)
+}
+
+async fn command_path(command: &ServiceCommand) -> Result<String> {
+    match command {
+        ServiceCommand::Command(command) => Ok(command.clone()),
+        ServiceCommand::LaunchPackage {
+            package,
+            content_path,
+        } => {
+            let package_path = fetch_package_path(package).await?;
+            let path = PathBuf::from(&package_path);
+            let path = path.join(
+                content_path
+                    .strip_prefix("/")
+                    .unwrap_or_else(|| &content_path),
+            );
+
+            Ok(path.display().to_string())
+        }
+        ServiceCommand::JVMClass { package, class } => {
+            let package_path = fetch_package_path(package).await?;
+
+            Ok(format!(
+                "/system/bin/app_process -cp {package_path} /system/bin --application {class}"
+            ))
+        }
+    }
+}
+
+async fn fetch_package_path(package: &str) -> Result<String> {
+    let child = Command::new("pm")
+        .args(&["path", package])
+        // TODO: Auto pipe output to Android log?
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()?;
+
+    let output = timeout(Duration::from_millis(500), child.wait_with_output()).await??;
+
+    if !output.status.success() {
+        return Err(Error::ProcessSpawnError(format!(
+            "Could not find package {package}"
+        )));
+    }
+
+    let stdout = String::from_utf8(output.stdout).ok();
+
+    if let Some(stdout) = stdout {
+        let package_path = stdout.trim_start_matches("package:").trim();
+        if !package_path.starts_with("/data/app") {
+            return Err(Error::ProcessSpawnError(format!(
+                "Found invalid package path for package {package}. Found {package_path}"
+            )));
+        }
+
+        return Ok(package_path.into());
+    }
+
+    Err(Error::ProcessSpawnError(format!(
+        "Could not find package {package}"
+    )))
 }
