@@ -47,6 +47,9 @@ struct NoAdditionalArgs {
 
 #[tokio::main]
 async fn main() {
+    println!(
+        "Starting pinitd. You probably don't want to use this binary; use the one included in the APK. All future output will be sent to Logcat"
+    );
     // Purposefully don't initialize logging until we need it, so we can specialize it for the process in question
     match run().await {
         Err(e) => {
