@@ -26,7 +26,7 @@ impl SpawnCommand {
 
         info!("Spawning process for \"{name}\": \"{}\"", config.command);
 
-        let child = if config.uid != UID::Shell {
+        let child = if config.uid != UID::Shell && config.uid != UID::System {
             spawn_zygote_exploit(config).await
         } else {
             spawn_standard(config).await
