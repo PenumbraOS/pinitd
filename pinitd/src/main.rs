@@ -76,19 +76,16 @@ async fn run() -> Result<()> {
     #[cfg(target_os = "android")]
     log_panics::init();
 
-    #[cfg(target_os = "android")]
-    if let Err(error) = extract_and_write_fd() {
-        error!("fd error: {error}");
-    }
-
     match Args::try_parse()? {
         Args::Controller(_) => {
             init_logging_with_tag("pinitd-controller".into());
+            init_zygote();
             info!("Specializing controller");
             Ok(Controller::specialize().await?)
         }
         Args::Worker(_) => {
             init_logging_with_tag("pinitd-worker".into());
+            init_zygote();
             info!("Specializing worker");
             Ok(WorkerProcess::specialize().await?)
         }
@@ -102,8 +99,16 @@ async fn run() -> Result<()> {
         }
         Args::ZygoteSpawnWrapper(args) => {
             init_logging_with_tag("pinitd-wrapper".into());
+            init_zygote();
             Ok(Wrapper::specialize(args.command).await?)
         }
+    }
+}
+
+fn init_zygote() {
+    #[cfg(target_os = "android")]
+    if let Err(error) = extract_and_write_fd() {
+        error!("fd error: {error}");
     }
 }
 

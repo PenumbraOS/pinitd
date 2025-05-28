@@ -17,6 +17,9 @@ fun launch(context: Context) {
     val binaryPath = basePath + "lib/arm64/libpinitd.so"
     Log.w(TAG, "Attempting to launch: $binaryPath")
     try {
+        // This spawning process appears to write an extra byte to Zygote's control socket
+        // However, this only seems to cause Zygote to think we have the wrong pid. I am unsure
+        // if this has any negative ramifications
         val process = Runtime.getRuntime().exec(arrayOf(binaryPath, "build-payload"))
 
         val reader = BufferedReader(InputStreamReader(process.inputStream))

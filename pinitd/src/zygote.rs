@@ -15,7 +15,7 @@ pub fn extract_and_write_fd() -> Result<()> {
 
     let mut pipe: File = unsafe { File::from_raw_fd(fd) };
     warn!("Opening fd {fd}, {pipe:?}");
-    pipe.write_all(&helper_pid.to_be_bytes()).unwrap();
+    let _ = pipe.write_all(&helper_pid.to_be_bytes());
     let _ = pipe.flush();
 
     Ok(())
