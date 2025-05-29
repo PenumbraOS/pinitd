@@ -25,6 +25,12 @@ impl TryFrom<&str> for RestartPolicy {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ExploitTriggerActivity {
+    pub package: String,
+    pub activity: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum ServiceCommand {
     /// Launches an arbitrary command
     Command(String),
@@ -32,9 +38,15 @@ pub enum ServiceCommand {
     LaunchPackage {
         package: String,
         content_path: String,
+        args: Option<String>,
     },
     /// Launches a JVM process using `app_process`. The classpath will be set to the package APK. Does not provide a full Android app context
-    JVMClass { package: String, class: String },
+    JVMClass {
+        package: String,
+        class: String,
+        args: Option<String>,
+        trigger_activity: Option<ExploitTriggerActivity>,
+    },
 }
 
 impl Display for ServiceCommand {
@@ -44,8 +56,9 @@ impl Display for ServiceCommand {
             ServiceCommand::LaunchPackage {
                 package,
                 content_path,
+                ..
             } => f.write_fmt(format_args!("Package command: {content_path} at {package}")),
-            ServiceCommand::JVMClass { package, class } => {
+            ServiceCommand::JVMClass { package, class, .. } => {
                 f.write_fmt(format_args!("JVM class command: {class} at {package}"))
             }
         }

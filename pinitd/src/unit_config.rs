@@ -3,7 +3,7 @@ use std::path::Path;
 use ini::Ini;
 use pinitd_common::{
     UID,
-    unit_config::{RestartPolicy, ServiceCommand, ServiceConfig},
+    unit_config::{ExploitTriggerActivity, RestartPolicy, ServiceCommand, ServiceConfig},
 };
 use tokio::fs;
 
@@ -30,6 +30,8 @@ impl ParsableServiceConfig for ServiceConfig {
 
         let mut name = None;
         let mut command = None;
+        let mut extra_args = None;
+        let mut trigger_app = None;
         let mut uid = UID::Shell;
         let mut se_info = None;
         let mut nice_name = None;
@@ -62,6 +64,7 @@ impl ParsableServiceConfig for ServiceConfig {
                     command = Some(ServiceCommand::LaunchPackage {
                         package: package.unwrap().to_string(),
                         content_path: content_path.unwrap().to_string(),
+                        args: None,
                     });
                 }
                 "ExecJvmClass" => {
@@ -84,6 +87,31 @@ impl ParsableServiceConfig for ServiceConfig {
                     command = Some(ServiceCommand::JVMClass {
                         package: package.unwrap().to_string(),
                         class: class.unwrap().to_string(),
+                        args: None,
+                        trigger_activity: None,
+                    });
+                }
+                "ExecArgs" => extra_args = Some(value.trim().to_string()),
+                "TriggerActivity" => {
+                    let mut iter = value.trim().splitn(2, "/");
+                    let package = iter.next();
+                    let activity = iter.next();
+
+                    if package.is_none() {
+                        return Err(Error::ConfigError(
+                            "Could not parse TriggerActivity: No package".into(),
+                        ));
+                    }
+
+                    if activity.is_none() {
+                        return Err(Error::ConfigError(
+                            "Could not parse TriggerActivity: No activity".into(),
+                        ));
+                    }
+
+                    trigger_app = Some(ExploitTriggerActivity {
+                        package: package.unwrap().to_string(),
+                        activity: activity.unwrap().to_string(),
                     });
                 }
                 "Uid" => {
@@ -123,7 +151,7 @@ impl ParsableServiceConfig for ServiceConfig {
             return Err(Error::ConfigError("\"Name\" must be provided".into()));
         };
 
-        let command = if let Some(command) = command {
+        let command = if let Some(mut command) = command {
             match command {
                 ServiceCommand::Command(ref command_string) => {
                     if command_string.is_empty() {
@@ -133,6 +161,7 @@ impl ParsableServiceConfig for ServiceConfig {
                 ServiceCommand::LaunchPackage {
                     ref package,
                     ref content_path,
+                    ref mut args,
                 } => {
                     if package.is_empty() {
                         return Err(Error::ConfigError(
@@ -145,10 +174,16 @@ impl ParsableServiceConfig for ServiceConfig {
                             "\"ExecPackage\" must contain a content path".into(),
                         ));
                     }
+
+                    if let Some(extra_args) = extra_args {
+                        args.replace(extra_args);
+                    }
                 }
                 ServiceCommand::JVMClass {
                     ref package,
                     ref class,
+                    ref mut args,
+                    ref mut trigger_activity,
                 } => {
                     if package.is_empty() {
                         return Err(Error::ConfigError(
@@ -161,13 +196,21 @@ impl ParsableServiceConfig for ServiceConfig {
                             "\"ExecJVMClass\" must contain a class".into(),
                         ));
                     }
+
+                    if let Some(extra_args) = extra_args {
+                        args.replace(extra_args);
+                    }
+
+                    if let Some(activity) = trigger_app {
+                        trigger_activity.replace(activity);
+                    }
                 }
             }
 
             command
         } else {
             return Err(Error::ConfigError(
-                "\"Exec\" or \"ExecPackage\" must be provided".into(),
+                "\"Exec\", \"ExecPackage\", or \"ExecJvmClass\" must be provided".into(),
             ));
         };
 

@@ -116,7 +116,7 @@ impl InnerSpawnChild {
 }
 
 async fn spawn_standard(config: ServiceConfig) -> Result<InnerSpawnChild> {
-    let command = command_path(&config.command).await?;
+    let command = expanded_command(&config.command).await?;
     let command = wrapper_command(&command)?;
 
     let child = Command::new("sh")
@@ -132,8 +132,9 @@ async fn spawn_standard(config: ServiceConfig) -> Result<InnerSpawnChild> {
 }
 
 async fn spawn_zygote_exploit(config: ServiceConfig) -> Result<InnerSpawnChild> {
-    let command = command_path(&config.command).await?;
+    let command = expanded_command(&config.command).await?;
     let command = wrapper_command(&command)?;
+    let trigger_app = zygote_trigger_activity(&config.command);
 
     build_and_execute(
         config.uid.into(),
@@ -144,10 +145,7 @@ async fn spawn_zygote_exploit(config: ServiceConfig) -> Result<InnerSpawnChild> 
             |se_info| &se_info,
         ),
         &ExploitKind::Command(command),
-        &TriggerApp::new(
-            "com.android.settings".into(),
-            "com.android.settings.Settings".into(),
-        ),
+        &trigger_app,
         config.nice_name.as_deref(),
         true,
     )?;
@@ -160,12 +158,13 @@ fn wrapper_command(command: &str) -> Result<String> {
     Ok(format!("{} wrapper \"{command}\"", path.display()))
 }
 
-async fn command_path(command: &ServiceCommand) -> Result<String> {
+async fn expanded_command(command: &ServiceCommand) -> Result<String> {
     match command {
         ServiceCommand::Command(command) => Ok(command.clone()),
         ServiceCommand::LaunchPackage {
             package,
             content_path,
+            args,
         } => {
             let package_path = fetch_package_path(package).await?;
             let path = PathBuf::from(&package_path);
@@ -175,16 +174,52 @@ async fn command_path(command: &ServiceCommand) -> Result<String> {
                     .unwrap_or_else(|| &content_path),
             );
 
-            Ok(path.display().to_string())
+            let command = path.display().to_string();
+
+            let command = if let Some(args) = args {
+                format!("{command} {args}").trim().to_string()
+            } else {
+                command
+            };
+
+            Ok(command)
         }
-        ServiceCommand::JVMClass { package, class } => {
+        ServiceCommand::JVMClass {
+            package,
+            class,
+            args,
+            ..
+        } => {
             let package_path = fetch_package_path(package).await?;
 
+            let args = if let Some(args) = args { &args } else { "" };
+
             Ok(format!(
-                "/system/bin/app_process -cp {package_path} /system/bin --application {class}"
-            ))
+                "/system/bin/app_process -cp {package_path} /system/bin --application {class} {args}"
+            ).trim().to_string())
         }
     }
+}
+
+fn zygote_trigger_activity(command: &ServiceCommand) -> TriggerApp {
+    match command {
+        ServiceCommand::JVMClass {
+            trigger_activity, ..
+        } => {
+            if let Some(trigger_activity) = trigger_activity {
+                return TriggerApp::new(
+                    trigger_activity.package.clone(),
+                    trigger_activity.package.clone(),
+                );
+            }
+        }
+        _ => {}
+    }
+
+    return TriggerApp::new(
+        "com.android.settings".into(),
+        "com.android.settings.Settings".into(),
+    );
 }
 
 async fn fetch_package_path(package: &str) -> Result<String> {
