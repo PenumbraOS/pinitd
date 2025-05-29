@@ -160,11 +160,12 @@ fn wrapper_command(command: &str) -> Result<String> {
 
 async fn expanded_command(command: &ServiceCommand) -> Result<String> {
     match command {
-        ServiceCommand::Command(command) => Ok(command.clone()),
+        ServiceCommand::Command { command, .. } => Ok(command.clone()),
         ServiceCommand::LaunchPackage {
             package,
             content_path,
             args,
+            ..
         } => {
             let package_path = fetch_package_path(package).await?;
             let path = PathBuf::from(&package_path);
@@ -202,24 +203,26 @@ async fn expanded_command(command: &ServiceCommand) -> Result<String> {
 }
 
 fn zygote_trigger_activity(command: &ServiceCommand) -> TriggerApp {
-    match command {
+    let trigger_activity = match command {
+        ServiceCommand::Command {
+            trigger_activity, ..
+        } => trigger_activity,
+        ServiceCommand::LaunchPackage {
+            trigger_activity, ..
+        } => trigger_activity,
         ServiceCommand::JVMClass {
             trigger_activity, ..
-        } => {
-            if let Some(trigger_activity) = trigger_activity {
-                return TriggerApp::new(
-                    trigger_activity.package.clone(),
-                    trigger_activity.package.clone(),
-                );
-            }
-        }
-        _ => {}
+        } => trigger_activity,
     }
+    .clone();
 
-    return TriggerApp::new(
-        "com.android.settings".into(),
-        "com.android.settings.Settings".into(),
-    );
+    trigger_activity.map_or(
+        TriggerApp::new(
+            "com.android.settings".into(),
+            "com.android.settings.Settings".into(),
+        ),
+        |trigger| TriggerApp::new(trigger.package.clone(), trigger.package.clone()),
+    )
 }
 
 async fn fetch_package_path(package: &str) -> Result<String> {

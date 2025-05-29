@@ -33,12 +33,16 @@ pub struct ExploitTriggerActivity {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum ServiceCommand {
     /// Launches an arbitrary command
-    Command(String),
+    Command {
+        command: String,
+        trigger_activity: Option<ExploitTriggerActivity>,
+    },
     /// Launches a binary contained within an APK. Will look up the APK path, then apply `content_path` on top of that to find the binary to launch
     LaunchPackage {
         package: String,
         content_path: String,
         args: Option<String>,
+        trigger_activity: Option<ExploitTriggerActivity>,
     },
     /// Launches a JVM process using `app_process`. The classpath will be set to the package APK. Does not provide a full Android app context
     JVMClass {
@@ -52,7 +56,9 @@ pub enum ServiceCommand {
 impl Display for ServiceCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ServiceCommand::Command(command) => f.write_fmt(format_args!("Command: {command}")),
+            ServiceCommand::Command { command, .. } => {
+                f.write_fmt(format_args!("Command: {command}"))
+            }
             ServiceCommand::LaunchPackage {
                 package,
                 content_path,

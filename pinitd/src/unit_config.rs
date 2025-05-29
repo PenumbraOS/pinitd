@@ -43,7 +43,12 @@ impl ParsableServiceConfig for ServiceConfig {
                 "Name" => {
                     name = Some(value.trim().to_string());
                 }
-                "Exec" => command = Some(ServiceCommand::Command(value.trim().to_string())),
+                "Exec" => {
+                    command = Some(ServiceCommand::Command {
+                        command: value.trim().to_string(),
+                        trigger_activity: None,
+                    })
+                }
                 "ExecPackage" => {
                     let mut iter = value.trim().splitn(2, "/");
                     let package = iter.next();
@@ -65,6 +70,7 @@ impl ParsableServiceConfig for ServiceConfig {
                         package: package.unwrap().to_string(),
                         content_path: content_path.unwrap().to_string(),
                         args: None,
+                        trigger_activity: None,
                     });
                 }
                 "ExecJvmClass" => {
@@ -153,15 +159,23 @@ impl ParsableServiceConfig for ServiceConfig {
 
         let command = if let Some(mut command) = command {
             match command {
-                ServiceCommand::Command(ref command_string) => {
-                    if command_string.is_empty() {
+                ServiceCommand::Command {
+                    ref command,
+                    ref mut trigger_activity,
+                } => {
+                    if command.is_empty() {
                         return Err(Error::ConfigError("\"Exec\" cannot be empty".into()));
+                    }
+
+                    if let Some(activity) = trigger_app {
+                        trigger_activity.replace(activity);
                     }
                 }
                 ServiceCommand::LaunchPackage {
                     ref package,
                     ref content_path,
                     ref mut args,
+                    ref mut trigger_activity,
                 } => {
                     if package.is_empty() {
                         return Err(Error::ConfigError(
@@ -177,6 +191,10 @@ impl ParsableServiceConfig for ServiceConfig {
 
                     if let Some(extra_args) = extra_args {
                         args.replace(extra_args);
+                    }
+
+                    if let Some(activity) = trigger_app {
+                        trigger_activity.replace(activity);
                     }
                 }
                 ServiceCommand::JVMClass {
