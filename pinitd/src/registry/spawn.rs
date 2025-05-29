@@ -188,15 +188,26 @@ async fn expanded_command(command: &ServiceCommand) -> Result<String> {
         ServiceCommand::JVMClass {
             package,
             class,
-            args,
+            command_args,
+            jvm_args,
             ..
         } => {
             let package_path = fetch_package_path(package).await?;
 
-            let args = if let Some(args) = args { &args } else { "" };
+            let args = if let Some(command_args) = command_args {
+                &command_args
+            } else {
+                ""
+            };
+
+            let jvm_args = if let Some(jvm_args) = jvm_args {
+                &jvm_args
+            } else {
+                ""
+            };
 
             Ok(format!(
-                "/system/bin/app_process -cp {package_path} /system/bin --application {class} {args}"
+                "/system/bin/app_process -cp {package_path} {jvm_args} /system/bin --application {class} {args}"
             ).trim().to_string())
         }
     }

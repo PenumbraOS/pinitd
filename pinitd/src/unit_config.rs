@@ -30,7 +30,8 @@ impl ParsableServiceConfig for ServiceConfig {
 
         let mut name = None;
         let mut command = None;
-        let mut extra_args = None;
+        let mut extra_command_args = None;
+        let mut extra_jvm_args = None;
         let mut trigger_app = None;
         let mut uid = UID::Shell;
         let mut se_info = None;
@@ -93,11 +94,13 @@ impl ParsableServiceConfig for ServiceConfig {
                     command = Some(ServiceCommand::JVMClass {
                         package: package.unwrap().to_string(),
                         class: class.unwrap().to_string(),
-                        args: None,
+                        command_args: None,
+                        jvm_args: None,
                         trigger_activity: None,
                     });
                 }
-                "ExecArgs" => extra_args = Some(value.trim().to_string()),
+                "JvmArgs" => extra_jvm_args = Some(value.trim().to_string()),
+                "ExecArgs" => extra_command_args = Some(value.trim().to_string()),
                 "TriggerActivity" => {
                     let mut iter = value.trim().splitn(2, "/");
                     let package = iter.next();
@@ -189,7 +192,7 @@ impl ParsableServiceConfig for ServiceConfig {
                         ));
                     }
 
-                    if let Some(extra_args) = extra_args {
+                    if let Some(extra_args) = extra_command_args {
                         args.replace(extra_args);
                     }
 
@@ -200,7 +203,8 @@ impl ParsableServiceConfig for ServiceConfig {
                 ServiceCommand::JVMClass {
                     ref package,
                     ref class,
-                    ref mut args,
+                    ref mut command_args,
+                    ref mut jvm_args,
                     ref mut trigger_activity,
                 } => {
                     if package.is_empty() {
@@ -215,8 +219,12 @@ impl ParsableServiceConfig for ServiceConfig {
                         ));
                     }
 
-                    if let Some(extra_args) = extra_args {
-                        args.replace(extra_args);
+                    if let Some(extra_args) = extra_command_args {
+                        command_args.replace(extra_args);
+                    }
+
+                    if let Some(extra_jvm_args) = extra_jvm_args {
+                        jvm_args.replace(extra_jvm_args);
                     }
 
                     if let Some(activity) = trigger_app {

@@ -48,7 +48,8 @@ pub enum ServiceCommand {
     JVMClass {
         package: String,
         class: String,
-        args: Option<String>,
+        command_args: Option<String>,
+        jvm_args: Option<String>,
         trigger_activity: Option<ExploitTriggerActivity>,
     },
 }
