@@ -2,13 +2,14 @@ use std::{process, time::Duration};
 
 use android_31317_exploit::force_clear_exploit;
 use pinitd_common::{
-    CONTROL_SOCKET_ADDRESS,
-    bincode::Bincodable,
-    create_core_directories,
-    protocol::{CLICommand, CLIResponse},
+    CONTROL_SOCKET_ADDRESS, create_core_directories,
+    protocol::{
+        CLICommand, CLIResponse,
+        writable::{ProtocolRead, ProtocolWrite},
+    },
 };
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
+    io::AsyncRead,
     net::TcpListener,
     signal::unix::{SignalKind, signal},
     sync::broadcast,
@@ -24,6 +25,7 @@ use crate::{
     worker::connection::WorkerConnectionStatus,
 };
 
+mod pms;
 mod worker;
 
 #[derive(Clone)]
@@ -93,11 +95,8 @@ impl Controller {
                             .handle_command(&mut stream, shutdown_token_clone)
                             .await
                         {
-                            Ok(response) => match response.encode() {
-                                Ok(data) => {
-                                    let _ = stream.write_all(&data).await;
-                                    let _ = stream.shutdown().await;
-                                }
+                            Ok(response) => match response.write(&mut stream).await {
+                                Ok(_) => {}
                                 Err(err) => error!("Error responding to client: {err:?}"),
                             },
                             Err(err) => error!("Error handling client: {err:?}"),
@@ -117,12 +116,9 @@ impl Controller {
         shutdown_token: CancellationToken,
     ) -> Result<CLIResponse>
     where
-        T: AsyncRead + Unpin,
+        T: AsyncRead + Unpin + Send,
     {
-        let mut buffer = Vec::new();
-        stream.read_to_end(&mut buffer).await?;
-
-        let (command, _) = CLICommand::decode(&buffer)?;
+        let command = CLICommand::read(stream).await?;
         info!("Received CLICommand: {:?}", command);
 
         let response = self

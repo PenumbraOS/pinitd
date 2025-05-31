@@ -14,6 +14,8 @@ pub enum Error {
     #[error("Arg parse error {0}")]
     ArgError(#[from] clap::Error),
 
+    #[error("Common error: {0}")]
+    CommonError(#[from] pinitd_common::error::Error),
     #[error("Unknown error {0}")]
     Unknown(String),
 }

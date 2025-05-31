@@ -4,13 +4,12 @@ use crate::error::Result;
 use clap::Parser;
 use pinitd_common::{
     CONTROL_SOCKET_ADDRESS, ServiceStatus,
-    bincode::Bincodable,
-    protocol::{CLICommand, CLIResponse},
+    protocol::{
+        CLICommand, CLIResponse,
+        writable::{ProtocolRead, ProtocolWrite},
+    },
 };
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpStream,
-};
+use tokio::{io::AsyncWriteExt, net::TcpStream};
 
 mod error;
 
@@ -70,19 +69,11 @@ async fn main() -> Result<()> {
         Err(_) => exit_with_message("Cannot find pinitd. Is it running?"),
     };
 
-    let command_bytes = initd_command.encode()?;
-    stream.write_all(&command_bytes).await?;
-    // Indicate we're done writing. Crucial for the server to know the full message arrived if reading to end.
+    initd_command.write(&mut stream).await?;
+    // We don't need to write further
     stream.shutdown().await?;
 
-    let mut response_buffer = Vec::new();
-    stream.read_to_end(&mut response_buffer).await?;
-
-    if response_buffer.is_empty() {
-        exit_with_message("pinitd closed connection without sending a response")
-    }
-
-    let (response, _) = CLIResponse::decode(&response_buffer)?;
+    let response = CLIResponse::read(&mut stream).await?;
 
     match response {
         CLIResponse::Success(msg) => {
