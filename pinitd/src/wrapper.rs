@@ -8,6 +8,7 @@ pub struct Wrapper;
 
 impl Wrapper {
     pub async fn specialize(command: String) -> Result<()> {
+        // TODO: Figure out how to set process name
         info!("Spawning child \"{command}\"");
         let mut child = Command::new("sh")
             .args(&["-c", &command])
