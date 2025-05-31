@@ -245,6 +245,15 @@ impl ControllerRegistry {
             .await
     }
 
+    pub async fn update_service_state(&self, name: String, state: ServiceRunState) -> Result<()> {
+        self.local
+            .with_service_mut(&name, |service| {
+                service.set_state(state);
+                Ok(())
+            })
+            .await
+    }
+
     async fn remote_connection(&self) -> Result<WorkerConnection> {
         match self.remote.lock().await.clone() {
             ControllerRegistryWorker::Connected(connection) => Ok(connection),

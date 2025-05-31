@@ -27,6 +27,7 @@ use crate::{
 
 mod pms;
 mod worker;
+mod zygote;
 
 #[derive(Clone)]
 pub struct Controller {

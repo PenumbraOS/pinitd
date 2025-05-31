@@ -11,6 +11,7 @@ pub mod unit_config;
 
 pub const CONTROL_SOCKET_ADDRESS: &str = "127.0.0.1:1717";
 pub const WORKER_SOCKET_ADDRESS: &str = "127.0.0.1:1718";
+pub const PMS_SOCKET_ADDRESS: &str = "127.0.0.1:1719";
 
 #[cfg(target_os = "android")]
 pub const CONFIG_DIR: &str = "/sdcard/penumbra/etc/pinitd/system/";

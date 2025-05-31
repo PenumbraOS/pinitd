@@ -47,7 +47,7 @@ impl<T> ProtocolWrite<'_, T> for CLIResponse where T: AsyncWriteExt + Unpin + Se
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum PMSFromRemoteCommand {
-    ProcessLaunched { pinit_id: u32, pid: u32 },
+    ProcessLaunched { pinit_id: u32, pid: i32 },
 }
 
 // #[derive(Serialize, Deserialize, Debug)]
@@ -59,6 +59,7 @@ pub enum PMSFromRemoteCommand {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum PMSToRemoteCommand {
+    AllowStart,
     Kill,
 }
 
