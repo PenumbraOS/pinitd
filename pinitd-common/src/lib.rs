@@ -5,6 +5,7 @@ use std::{
 };
 
 pub mod bincode;
+pub mod error;
 pub mod protocol;
 pub mod unit_config;
 

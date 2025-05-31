@@ -1,6 +1,9 @@
 use std::{error::Error, sync::Arc, time::Duration};
 
-use pinitd_common::WORKER_SOCKET_ADDRESS;
+use pinitd_common::{
+    WORKER_SOCKET_ADDRESS,
+    protocol::writable::{ProtocolRead, ProtocolWrite},
+};
 use tokio::{
     io,
     net::{
@@ -17,7 +20,7 @@ use tokio::{
 
 use crate::{error::Result, types::BaseService};
 
-use super::protocol::{WorkerCommand, WorkerRead, WorkerResponse, WorkerWrite};
+use super::protocol::{WorkerCommand, WorkerResponse};
 
 #[derive(Clone)]
 pub enum WorkerConnectionStatus {
@@ -233,7 +236,7 @@ impl ControllerConnection {
             Err(err) => {
                 // Any error immediately closes the connection
                 self.connection.mark_disconnected(err.to_string());
-                Err(err)
+                Err(crate::error::Error::CommonError(err))
             }
         }
     }
@@ -257,7 +260,7 @@ impl ControllerConnection {
             Err(err) => {
                 // Any error immediately closes the connection
                 self.connection.mark_disconnected(err.to_string());
-                Err(err)
+                Err(crate::error::Error::CommonError(err))
             }
         }
     }

@@ -1,0 +1,81 @@
+use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use writable::{ProtocolRead, ProtocolWrite};
+
+use crate::{ServiceStatus, UID, bincode::Bincodable, error::Result, unit_config::ServiceConfig};
+
+pub mod writable;
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum CLICommand {
+    Start(String),
+    Stop(String),
+    Restart(String),
+    Enable(String),
+    Disable(String),
+    Reload(String),
+    ReloadAll,
+    Status(String),
+    Config(String),
+    // SpawnAppProcess {
+    //     jvm_path: String,
+    //     uid: UID,
+    //     se_info: String,
+    // },
+    List,
+    Shutdown,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum CLIResponse {
+    Success(String),
+    Error(String),
+    Status(ServiceStatus),
+    List(Vec<ServiceStatus>),
+    Config(ServiceConfig),
+    ShuttingDown,
+}
+
+impl Bincodable<'_> for CLICommand {}
+impl Bincodable<'_> for CLIResponse {}
+
+impl<T> ProtocolRead<'_, T> for CLICommand where T: AsyncReadExt + Unpin + Send {}
+impl<T> ProtocolRead<'_, T> for CLIResponse where T: AsyncReadExt + Unpin + Send {}
+
+impl<T> ProtocolWrite<'_, T> for CLICommand where T: AsyncWriteExt + Unpin + Send {}
+impl<T> ProtocolWrite<'_, T> for CLIResponse where T: AsyncWriteExt + Unpin + Send {}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum PMSFromRemoteCommand {
+    ProcessLaunched { pinit_id: u32, pid: u32 },
+}
+
+// #[derive(Serialize, Deserialize, Debug)]
+// pub enum PMSFromRemoteResponse {
+//     /// Process is expected, stay alive
+//     AllowProcess,
+//     KillProcess
+// }
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum PMSToRemoteCommand {
+    Kill,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum PMSToRemoteResponse {
+    Ack,
+}
+
+impl Bincodable<'_> for PMSFromRemoteCommand {}
+// impl Bincodable<'_> for PMSFromRemoteResponse {}
+impl Bincodable<'_> for PMSToRemoteCommand {}
+impl Bincodable<'_> for PMSToRemoteResponse {}
+
+impl<T> ProtocolRead<'_, T> for PMSFromRemoteCommand where T: AsyncReadExt + Unpin + Send {}
+impl<T> ProtocolRead<'_, T> for PMSToRemoteCommand where T: AsyncReadExt + Unpin + Send {}
+impl<T> ProtocolRead<'_, T> for PMSToRemoteResponse where T: AsyncReadExt + Unpin + Send {}
+
+impl<T> ProtocolWrite<'_, T> for PMSFromRemoteCommand where T: AsyncWriteExt + Unpin + Send {}
+impl<T> ProtocolWrite<'_, T> for PMSToRemoteCommand where T: AsyncWriteExt + Unpin + Send {}
+impl<T> ProtocolWrite<'_, T> for PMSToRemoteResponse where T: AsyncWriteExt + Unpin + Send {}
