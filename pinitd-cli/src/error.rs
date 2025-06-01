@@ -16,6 +16,7 @@ pub enum Error {
 
     #[error("Common error: {0}")]
     CommonError(#[from] pinitd_common::error::Error),
+    #[allow(dead_code)]
     #[error("Unknown error {0}")]
     Unknown(String),
 }

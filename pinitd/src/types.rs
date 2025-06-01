@@ -93,6 +93,7 @@ impl<'a> SyncedService<'a> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn set_config(&mut self, config: ServiceConfig) {
         if config != self.service.inner.config {
             self.service.inner.config = config;

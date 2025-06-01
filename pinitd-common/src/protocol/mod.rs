@@ -3,7 +3,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use uuid::Uuid;
 use writable::{ProtocolRead, ProtocolWrite};
 
-use crate::{ServiceStatus, UID, bincode::Bincodable, error::Result, unit_config::ServiceConfig};
+use crate::{ServiceStatus, bincode::Bincodable, unit_config::ServiceConfig};
 
 pub mod writable;
 

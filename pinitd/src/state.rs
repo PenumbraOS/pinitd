@@ -49,6 +49,7 @@ impl StoredState {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub async fn enable_service(&mut self, name: String) {
         if self.is_dummy {
             return;
@@ -58,10 +59,11 @@ impl StoredState {
             // Service is not already enabled
             self.enabled_services.push(name);
             // Since it doesn't matter clone the state before saving for nicer async
-            self.clone().save().await;
+            let _ = self.clone().save().await;
         }
     }
 
+    #[allow(dead_code)]
     pub async fn disable_service(&mut self, name: String) {
         if self.is_dummy {
             return;
@@ -70,7 +72,7 @@ impl StoredState {
         if let Some(i) = self.enabled_services.iter().position(|s| *s == name) {
             self.enabled_services.swap_remove(i);
             // Since it doesn't matter clone the state before saving for nicer async
-            self.clone().save().await;
+            let _ = self.clone().save().await;
         }
     }
 

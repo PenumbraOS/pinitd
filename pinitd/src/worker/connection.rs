@@ -204,6 +204,7 @@ impl WorkerConnection {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_connected(&self) -> bool {
         self.connection.is_connected()
     }
