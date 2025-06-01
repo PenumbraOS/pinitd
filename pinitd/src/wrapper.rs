@@ -18,7 +18,6 @@ pub struct Wrapper {
 
 impl Wrapper {
     pub async fn specialize(command: String, pinit_id: Uuid) -> Result<()> {
-        // TODO: Figure out how to set process name
         info!("Negociating launch for id {pinit_id}");
         let stream = match TcpStream::connect(PMS_SOCKET_ADDRESS).await {
             Ok(mut stream) => {

@@ -47,6 +47,9 @@ enum Args {
 
 #[derive(Parser, Debug)]
 struct WrapperArgs {
+    #[arg(long)]
+    is_zygote: bool,
+
     #[arg(index = 1)]
     id: Uuid,
 
@@ -103,7 +106,9 @@ async fn run() -> Result<()> {
         }
         Args::ZygoteSpawnWrapper(args) => {
             init_logging_with_tag("pinitd-wrapper".into());
-            init_zygote();
+            if args.is_zygote {
+                init_zygote();
+            }
             Ok(Wrapper::specialize(args.command, args.id).await?)
         }
     }

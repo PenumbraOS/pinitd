@@ -119,7 +119,7 @@ impl InnerSpawnChild {
 
 async fn spawn_standard(config: ServiceConfig, pinit_id: Uuid) -> Result<InnerSpawnChild> {
     let command = expanded_command(&config.command).await?;
-    let command = wrapper_command(&command, pinit_id)?;
+    let command = wrapper_command(&command, pinit_id, false)?;
 
     let child = Command::new("sh")
         .args(&["-c", &command])
@@ -135,7 +135,7 @@ async fn spawn_standard(config: ServiceConfig, pinit_id: Uuid) -> Result<InnerSp
 
 async fn spawn_zygote_exploit(config: ServiceConfig, pinit_id: Uuid) -> Result<InnerSpawnChild> {
     let command = expanded_command(&config.command).await?;
-    let command = wrapper_command(&command, pinit_id)?;
+    let command = wrapper_command(&command, pinit_id, true)?;
     let trigger_app = zygote_trigger_activity(&config.command);
 
     build_and_execute(
@@ -155,10 +155,11 @@ async fn spawn_zygote_exploit(config: ServiceConfig, pinit_id: Uuid) -> Result<I
     Ok(InnerSpawnChild::ZygoteExploit)
 }
 
-fn wrapper_command(command: &str, pinit_id: Uuid) -> Result<String> {
+fn wrapper_command(command: &str, pinit_id: Uuid, is_zygote: bool) -> Result<String> {
     let path = env::current_exe()?;
+    let zygote_arg = if is_zygote { "--is-zygote " } else { "" };
     Ok(format!(
-        "{} wrapper \"{pinit_id}\" \"{command}\"",
+        "{} wrapper {zygote_arg}\"{pinit_id}\" \"{command}\"",
         path.display()
     ))
 }
