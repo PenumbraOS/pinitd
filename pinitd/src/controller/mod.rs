@@ -8,6 +8,7 @@ use pinitd_common::{
         writable::{ProtocolRead, ProtocolWrite},
     },
 };
+use pms::ProcessManagementService;
 use tokio::{
     io::AsyncRead,
     net::TcpListener,
@@ -25,7 +26,7 @@ use crate::{
     worker::connection::WorkerConnectionStatus,
 };
 
-mod pms;
+pub mod pms;
 mod worker;
 mod zygote;
 
@@ -48,7 +49,9 @@ impl Controller {
             worker_connected_rx,
         } = StartWorkerState::start().await?;
 
-        let registry = ControllerRegistry::new(connection).await?;
+        let mut registry = ControllerRegistry::new(connection).await?;
+        let pms = ProcessManagementService::new(registry.clone()).await?;
+        registry.set_pms(pms).await;
         let controller = Controller { registry };
 
         controller.registry.load_from_disk().await?;

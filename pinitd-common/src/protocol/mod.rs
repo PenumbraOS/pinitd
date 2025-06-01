@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use uuid::Uuid;
 use writable::{ProtocolRead, ProtocolWrite};
 
 use crate::{ServiceStatus, UID, bincode::Bincodable, error::Result, unit_config::ServiceConfig};
@@ -47,7 +48,12 @@ impl<T> ProtocolWrite<'_, T> for CLIResponse where T: AsyncWriteExt + Unpin + Se
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum PMSFromRemoteCommand {
-    ProcessLaunched { pinit_id: u32, pid: i32 },
+    /// Zygote spawn command ID
+    WrapperLaunched(Uuid),
+    /// Actual process pid
+    ProcessAttached(u32),
+    /// Process exit code
+    ProcessExited(Option<i32>),
 }
 
 // #[derive(Serialize, Deserialize, Debug)]
@@ -61,6 +67,7 @@ pub enum PMSFromRemoteCommand {
 pub enum PMSToRemoteCommand {
     AllowStart,
     Kill,
+    Ack,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

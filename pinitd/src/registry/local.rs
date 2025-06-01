@@ -10,8 +10,10 @@ use tokio::{
     task::JoinHandle,
     time::sleep,
 };
+use uuid::Uuid;
 
 use crate::{
+    controller::pms::ProcessManagementService,
     error::{Error, Result},
     registry::spawn::SpawnCommand,
     state::StoredState,
@@ -22,6 +24,7 @@ use crate::{
 use super::Registry;
 
 struct InnerServiceRegistry {
+    pms: Option<ProcessManagementService>,
     stored_state: StoredState,
     registry: HashMap<String, Service>,
     controller_connection: Option<ControllerConnection>,
@@ -31,8 +34,9 @@ struct InnerServiceRegistry {
 pub struct LocalRegistry(Arc<Mutex<InnerServiceRegistry>>);
 
 impl LocalRegistry {
-    pub fn controller(stored_state: StoredState) -> Result<Self> {
+    pub fn new_controller(stored_state: StoredState) -> Result<Self> {
         let inner = InnerServiceRegistry {
+            pms: None,
             stored_state,
             registry: HashMap::new(),
             controller_connection: None,
@@ -42,8 +46,9 @@ impl LocalRegistry {
         Ok(registry)
     }
 
-    pub fn worker(connection: ControllerConnection) -> Result<Self> {
+    pub fn new_worker(connection: ControllerConnection) -> Result<Self> {
         let inner = InnerServiceRegistry {
+            pms: None,
             stored_state: StoredState::dummy(),
             registry: HashMap::new(),
             controller_connection: Some(connection),
@@ -51,6 +56,10 @@ impl LocalRegistry {
 
         let registry = LocalRegistry(Arc::new(Mutex::new(inner)));
         Ok(registry)
+    }
+
+    pub async fn set_pms(&mut self, pms: ProcessManagementService) {
+        self.0.lock().await.pms = Some(pms);
     }
 
     async fn with_registry<F, R>(&self, func: F) -> Result<R>
@@ -133,10 +142,20 @@ impl LocalRegistry {
         tokio::spawn(async move {
             loop {
                 info!("Starting process \"{name}\"");
+                let id = Uuid::new_v4();
+                inner_registry
+                    .0
+                    .lock()
+                    .await
+                    .pms
+                    .as_mut()
+                    .unwrap()
+                    .register_spawn(id.clone(), name.clone())
+                    .await;
                 if let Ok(SpawnCommand {
                     exit_code,
                     exit_message,
-                }) = SpawnCommand::spawn(inner_registry.clone(), inner_name.clone()).await
+                }) = SpawnCommand::spawn(inner_registry.clone(), inner_name.clone(), id).await
                 {
                     let mut expected_stop = false;
 
@@ -375,7 +394,7 @@ fn service_stop_internal(name: &str, service: &mut SyncedService) {
             service.set_state(ServiceRunState::Stopping);
 
             info!("Attempting to stop service \"{name}\" (pid: {pid}). Sending SIGTERM");
-            let result = unsafe { kill(pid, SIGTERM) };
+            let result = unsafe { kill(pid as i32, SIGTERM) };
             if result != 0 {
                 warn!("Failed to send SIGTERM to pid {pid}: result {result}");
             } else {

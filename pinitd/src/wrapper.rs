@@ -1,14 +1,38 @@
-use std::process::Stdio;
+use std::{process::Stdio, time::Duration};
 
-use tokio::process::Command;
+use pinitd_common::{
+    PMS_SOCKET_ADDRESS,
+    protocol::{
+        PMSFromRemoteCommand, PMSToRemoteCommand,
+        writable::{ProtocolRead, ProtocolWrite},
+    },
+};
+use tokio::{net::TcpStream, process::Command, time::timeout};
+use uuid::Uuid;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 
-pub struct Wrapper;
+pub struct Wrapper {
+    stream: Option<TcpStream>,
+}
 
 impl Wrapper {
-    pub async fn specialize(command: String) -> Result<()> {
+    pub async fn specialize(command: String, pinit_id: Uuid) -> Result<()> {
         // TODO: Figure out how to set process name
+        info!("Negociating launch for id {pinit_id}");
+        let stream = match TcpStream::connect(PMS_SOCKET_ADDRESS).await {
+            Ok(mut stream) => {
+                negoticate_launch(&mut stream, pinit_id).await?;
+                Some(stream)
+            }
+            Err(_) => {
+                warn!("Could not connect to PMS, continuing with spawn");
+                None
+            }
+        };
+
+        let mut wrapper = Wrapper { stream };
+
         info!("Spawning child \"{command}\"");
         let mut child = Command::new("sh")
             .args(&["-c", &command])
@@ -20,11 +44,52 @@ impl Wrapper {
             .spawn()?;
 
         info!("Spawned process with pid {:?}", child.id());
+        if let Some(pid) = child.id() {
+            let _ = wrapper
+                .write_if_connected(PMSFromRemoteCommand::ProcessAttached(pid))
+                .await;
+        }
 
-        // TODO: Report status to controller
+        // TODO: Handle subsequent commands
         let exit_status = child.wait().await?;
         info!("Process terminated with code {:?}", exit_status.code());
 
+        let _ = wrapper
+            .write_if_connected(PMSFromRemoteCommand::ProcessExited(exit_status.code()))
+            .await;
+
         Ok(())
     }
+
+    async fn write_if_connected(&mut self, command: PMSFromRemoteCommand) -> Result<()> {
+        if let Some(stream) = &mut self.stream {
+            Ok(command.write(stream).await?)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+async fn negoticate_launch(stream: &mut TcpStream, pinit_id: Uuid) -> Result<()> {
+    timeout(Duration::from_secs(2), async move {
+        PMSFromRemoteCommand::WrapperLaunched(pinit_id)
+            .write(stream)
+            .await?;
+
+        info!("Waiting for controller response");
+        let pms_response = PMSToRemoteCommand::read(stream).await?;
+        info!("Controller response {pms_response:?}");
+
+        match pms_response {
+            PMSToRemoteCommand::Kill => {
+                return Err(Error::ProcessSpawnError(
+                    "PMS requested wrapper kill. Dying".to_string(),
+                ));
+            }
+            _ => {}
+        }
+
+        Ok(())
+    })
+    .await?
 }

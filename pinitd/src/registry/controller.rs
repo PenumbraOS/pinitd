@@ -15,6 +15,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    controller::pms::ProcessManagementService,
     error::{Error, Result},
     state::StoredState,
     types::{BaseService, Service},
@@ -72,7 +73,7 @@ impl ControllerRegistry {
         info!("Loaded enabled state for: {:?}", state.enabled_services);
 
         info!("Loading service configurations from {}", CONFIG_DIR);
-        let local = LocalRegistry::controller(state)?;
+        let local = LocalRegistry::new_controller(state)?;
         Ok(Self {
             local,
             remote: Arc::new(Mutex::new(ControllerRegistryWorker::Connected(connection))),
@@ -112,6 +113,10 @@ impl ControllerRegistry {
         info!("Finished loading configurations. {load_count} services loaded.");
 
         Ok(())
+    }
+
+    pub async fn set_pms(&mut self, pms: ProcessManagementService) {
+        self.local.set_pms(pms).await
     }
 
     pub async fn service_reload(&self, name: String) -> Result<Option<ServiceConfig>> {

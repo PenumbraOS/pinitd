@@ -13,6 +13,7 @@ use controller::Controller;
 use error::Result;
 #[cfg(not(target_os = "android"))]
 use simple_logger::SimpleLogger;
+use uuid::Uuid;
 use worker::process::WorkerProcess;
 use wrapper::Wrapper;
 use zygote::extract_and_write_fd;
@@ -47,9 +48,12 @@ enum Args {
 #[derive(Parser, Debug)]
 struct WrapperArgs {
     #[arg(index = 1)]
+    id: Uuid,
+
+    #[arg(index = 2)]
     command: String,
 
-    #[arg(index = 2, trailing_var_arg = true, allow_hyphen_values = true)]
+    #[arg(index = 3, trailing_var_arg = true, allow_hyphen_values = true)]
     _remaining_args: Vec<String>,
 }
 
@@ -100,7 +104,7 @@ async fn run() -> Result<()> {
         Args::ZygoteSpawnWrapper(args) => {
             init_logging_with_tag("pinitd-wrapper".into());
             init_zygote();
-            Ok(Wrapper::specialize(args.command).await?)
+            Ok(Wrapper::specialize(args.command, args.id).await?)
         }
     }
 }

@@ -7,13 +7,17 @@ use crate::{
 use pinitd_common::{
     PMS_SOCKET_ADDRESS, ServiceRunState,
     bincode::Bincodable,
-    protocol::{PMSFromRemoteCommand, PMSToRemoteCommand, writable::ProtocolRead},
+    protocol::{
+        PMSFromRemoteCommand, PMSToRemoteCommand,
+        writable::{ProtocolRead, ProtocolWrite},
+    },
 };
 use tokio::{
-    io::{AsyncRead, AsyncWriteExt},
+    io::{self, AsyncRead, AsyncWriteExt},
     net::{TcpListener, tcp::OwnedWriteHalf},
     sync::Mutex,
 };
+use uuid::Uuid;
 
 use super::zygote::ZygoteProcessConnection;
 
@@ -23,12 +27,13 @@ pub struct ProcessManagementService {
     registry: ControllerRegistry,
     zygote_registrations: Arc<Mutex<HashMap<String, ZygoteProcessConnection>>>,
     /// Internal id to service name
-    zygote_ids: Arc<Mutex<HashMap<u32, String>>>,
+    zygote_ids: Arc<Mutex<HashMap<Uuid, String>>>,
 }
 
 impl ProcessManagementService {
-    pub async fn spawn(registry: ControllerRegistry) -> Result<Self> {
+    pub async fn new(registry: ControllerRegistry) -> Result<Self> {
         let socket = TcpListener::bind(PMS_SOCKET_ADDRESS).await?;
+        info!("PMS started");
 
         let pms = Self {
             registry,
@@ -46,32 +51,51 @@ impl ProcessManagementService {
                         tokio::spawn(async move {
                             let (mut stream_rx, stream_tx) = stream.into_split();
                             let stream_tx = Arc::new(Mutex::new(stream_tx));
-                            let mut is_first_command = true;
+                            // let mut is_first_command = true;
+                            let mut connection = None;
                             loop {
                                 match pms_clone
                                     .handle_command(
                                         &mut stream_rx,
                                         stream_tx.clone(),
-                                        &mut is_first_command,
+                                        &mut connection,
                                     )
                                     .await
                                 {
-                                    Ok(Some(response)) => match response.encode() {
-                                        Ok(data) => {
-                                            let _ = stream_tx.lock().await.write_all(&data).await;
+                                    Ok(Some(response)) => {
+                                        let mut write_lock = stream_tx.lock().await;
+                                        match response.write(&mut *write_lock).await {
+                                            Ok(_) => {}
+                                            Err(err) => {
+                                                error!("Error responding to client: {err:?}");
+                                                Self::transmit_kill_response(stream_tx.clone())
+                                                    .await;
+                                                return;
+                                            }
                                         }
-                                        Err(err) => {
-                                            error!("Error responding to client: {err:?}");
-                                            Self::transmit_kill_response(stream_tx.clone()).await;
-                                            return;
-                                        }
-                                    },
+                                    }
                                     Err(err) => {
+                                        if let Error::CommonError(
+                                            pinitd_common::error::Error::IO(err),
+                                        ) = &err
+                                        {
+                                            if err.kind() == io::ErrorKind::UnexpectedEof {
+                                                if let Some(connection) = connection {
+                                                    info!(
+                                                        "Closing connection for {}",
+                                                        connection.pinit_id
+                                                    );
+                                                }
+                                                // Don't log eof errors; this is normal
+                                                return;
+                                            }
+                                        }
+
                                         error!("Error handling client: {err:?}");
                                         Self::transmit_kill_response(stream_tx.clone()).await;
                                         return;
                                     }
-                                    _ => {}
+                                    _ => info!("Dead case"),
                                 }
                             }
                         });
@@ -86,11 +110,15 @@ impl ProcessManagementService {
         Ok(pms)
     }
 
+    pub async fn register_spawn(&self, id: Uuid, service_name: String) {
+        self.zygote_ids.lock().await.insert(id, service_name);
+    }
+
     async fn handle_command<T>(
         &mut self,
         stream_rx: &mut T,
         stream_tx: Arc<Mutex<OwnedWriteHalf>>,
-        is_first_command: &mut bool,
+        connection: &mut Option<ZygoteProcessConnection>,
     ) -> Result<Option<PMSToRemoteCommand>>
     where
         T: AsyncRead + Unpin + Send,
@@ -98,21 +126,21 @@ impl ProcessManagementService {
         let command = PMSFromRemoteCommand::read(stream_rx).await?;
         info!("Received PMS command: {:?}", command);
 
-        let is_process_launch = matches!(command, PMSFromRemoteCommand::ProcessLaunched { .. });
+        let is_process_launch = matches!(command, PMSFromRemoteCommand::WrapperLaunched { .. });
 
-        if *is_first_command {
+        if connection.is_none() {
             if !is_process_launch {
-                return Err(Error::Unknown("First command received on new PMS connection is not a launch command. Terminating".to_string()));
+                return Err(Error::Unknown("First command received on new PMS connection is not a WrapperLaunched command. Terminating".to_string()));
             }
         } else if is_process_launch {
             return Err(Error::Unknown(
-                "Received process launch command on existing PMS connection. Terminating"
+                "Received WrapperLaunched command on existing PMS connection. Terminating"
                     .to_string(),
             ));
         }
 
         match command {
-            PMSFromRemoteCommand::ProcessLaunched { pinit_id, pid } => {
+            PMSFromRemoteCommand::WrapperLaunched(pinit_id) => {
                 let zygote_ids_lock = self.zygote_ids.lock().await;
 
                 if let Some(service_name) = zygote_ids_lock.get(&pinit_id) {
@@ -126,16 +154,17 @@ impl ProcessManagementService {
                         return Ok(Some(PMSToRemoteCommand::Kill));
                     }
 
+                    let zygote_connection = ZygoteProcessConnection {
+                        pinit_id,
+                        service_name: service_name.clone(),
+                        stream_tx,
+                    };
+
                     // Register connection
                     zygote_registration_lock
-                        .insert(service_name.clone(), ZygoteProcessConnection { stream_tx });
-
-                    self.registry
-                        .update_service_state(
-                            service_name.clone(),
-                            ServiceRunState::Running { pid },
-                        )
-                        .await?;
+                        .insert(service_name.clone(), zygote_connection.clone());
+                    *connection = Some(zygote_connection);
+                    info!("Registered \"{service_name}\" with id {pinit_id}");
 
                     return Ok(Some(PMSToRemoteCommand::AllowStart));
                 } else {
@@ -143,9 +172,23 @@ impl ProcessManagementService {
                     return Ok(Some(PMSToRemoteCommand::Kill));
                 }
             }
-        }
+            PMSFromRemoteCommand::ProcessAttached(pid) => {
+                let connection = connection.as_mut().unwrap();
+                self.registry
+                    .update_service_state(
+                        connection.service_name.clone(),
+                        ServiceRunState::Running { pid },
+                    )
+                    .await?;
+                info!("Received pid {pid} for \"{}\"", connection.service_name);
 
-        Ok(None)
+                Ok(Some(PMSToRemoteCommand::Ack))
+            }
+            PMSFromRemoteCommand::ProcessExited(_exit_code) => {
+                // TODO: Implement
+                Ok(None)
+            }
+        }
     }
 
     async fn transmit_kill_response(stream_tx: Arc<Mutex<OwnedWriteHalf>>) {

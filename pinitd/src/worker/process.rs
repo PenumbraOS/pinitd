@@ -27,7 +27,7 @@ impl WorkerProcess {
         let mut connection = ControllerConnection::open().await?;
         info!("Controller connected");
 
-        let mut registry = LocalRegistry::worker(connection.clone())?;
+        let mut registry = LocalRegistry::new_worker(connection.clone())?;
         let token = CancellationToken::new();
 
         loop {

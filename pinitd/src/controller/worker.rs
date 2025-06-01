@@ -61,6 +61,7 @@ impl StartWorkerState {
 
                 // Make sure connection stays available
                 connection.subscribe_for_disconnect().await;
+                info!("Worker disconnected");
                 let _ = worker_connected_tx.send(WorkerConnectionStatus::Disconnected);
                 // Loop again and attempt to reconnect
             }

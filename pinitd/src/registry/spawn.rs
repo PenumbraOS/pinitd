@@ -10,6 +10,7 @@ use tokio::{
     process::{Child, Command},
     time::timeout,
 };
+use uuid::Uuid;
 
 use super::local::LocalRegistry;
 
@@ -19,7 +20,7 @@ pub struct SpawnCommand {
 }
 
 impl SpawnCommand {
-    pub async fn spawn(registry: LocalRegistry, name: String) -> Result<Self> {
+    pub async fn spawn(registry: LocalRegistry, name: String, pinit_id: Uuid) -> Result<Self> {
         let config = registry
             .with_service(&name, |service| Ok(service.config().clone()))
             .await?;
@@ -27,9 +28,9 @@ impl SpawnCommand {
         info!("Spawning process for \"{name}\": \"{}\"", config.command);
 
         let child = if config.uid != UID::Shell && config.uid != UID::System {
-            spawn_zygote_exploit(config).await
+            spawn_zygote_exploit(config, pinit_id).await
         } else {
-            spawn_standard(config).await
+            spawn_standard(config, pinit_id).await
         };
 
         match child {
@@ -71,7 +72,7 @@ enum InnerSpawnChild {
 }
 
 impl InnerSpawnChild {
-    fn pid(&self, name: &str) -> Result<i32> {
+    fn pid(&self, name: &str) -> Result<u32> {
         match self {
             InnerSpawnChild::Standard(child) => child.id().map_or_else(
                 || {
@@ -79,7 +80,7 @@ impl InnerSpawnChild {
                         "Failed to get PID for spawned process \"{name}\"",
                     )))
                 },
-                |pid| Ok(pid as i32),
+                |pid| Ok(pid),
             ),
             // TODO: Provide pid reporting method for Zygote processes
             InnerSpawnChild::ZygoteExploit => Ok(100000),
@@ -115,9 +116,9 @@ impl InnerSpawnChild {
     }
 }
 
-async fn spawn_standard(config: ServiceConfig) -> Result<InnerSpawnChild> {
+async fn spawn_standard(config: ServiceConfig, pinit_id: Uuid) -> Result<InnerSpawnChild> {
     let command = expanded_command(&config.command).await?;
-    let command = wrapper_command(&command)?;
+    let command = wrapper_command(&command, pinit_id)?;
 
     let child = Command::new("sh")
         .args(&["-c", &command])
@@ -131,9 +132,9 @@ async fn spawn_standard(config: ServiceConfig) -> Result<InnerSpawnChild> {
     Ok(InnerSpawnChild::Standard(child))
 }
 
-async fn spawn_zygote_exploit(config: ServiceConfig) -> Result<InnerSpawnChild> {
+async fn spawn_zygote_exploit(config: ServiceConfig, pinit_id: Uuid) -> Result<InnerSpawnChild> {
     let command = expanded_command(&config.command).await?;
-    let command = wrapper_command(&command)?;
+    let command = wrapper_command(&command, pinit_id)?;
     let trigger_app = zygote_trigger_activity(&config.command);
 
     build_and_execute(
@@ -153,9 +154,12 @@ async fn spawn_zygote_exploit(config: ServiceConfig) -> Result<InnerSpawnChild> 
     Ok(InnerSpawnChild::ZygoteExploit)
 }
 
-fn wrapper_command(command: &str) -> Result<String> {
+fn wrapper_command(command: &str, pinit_id: Uuid) -> Result<String> {
     let path = env::current_exe()?;
-    Ok(format!("{} wrapper \"{command}\"", path.display()))
+    Ok(format!(
+        "{} wrapper \"{pinit_id}\" \"{command}\"",
+        path.display()
+    ))
 }
 
 async fn expanded_command(command: &ServiceCommand) -> Result<String> {

@@ -29,7 +29,7 @@ pub const PACKAGE_NAME: &str = "im.agg.pinitd";
 pub enum ServiceRunState {
     Stopped,
     Stopping,
-    Running { pid: i32 },
+    Running { pid: u32 },
     Failed { reason: String },
 }
 
