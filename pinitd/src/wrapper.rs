@@ -34,7 +34,7 @@ impl Wrapper {
         let mut wrapper = Wrapper { stream };
 
         info!("Spawning child \"{command}\"");
-        let mut child = Command::new("sh")
+        let child = Command::new("sh")
             .args(&["-c", &command])
             // TODO: Auto pipe output to Android log?
             .stdout(Stdio::piped())
@@ -51,11 +51,15 @@ impl Wrapper {
         }
 
         // TODO: Handle subsequent commands
-        let exit_status = child.wait().await?;
-        info!("Process terminated with code {:?}", exit_status.code());
+        let output = child.wait_with_output().await?;
+        info!("Process terminated with code {:?}", output.status.code());
+
+        if !output.status.success() {
+            info!("stderr: {}", String::from_utf8_lossy(&output.stderr));
+        }
 
         let _ = wrapper
-            .write_if_connected(PMSFromRemoteCommand::ProcessExited(exit_status.code()))
+            .write_if_connected(PMSFromRemoteCommand::ProcessExited(output.status.code()))
             .await;
 
         Ok(())

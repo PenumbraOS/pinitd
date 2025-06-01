@@ -8,6 +8,7 @@ use pinitd_common::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use uuid::Uuid;
 
 use crate::types::BaseService;
 
@@ -16,7 +17,10 @@ pub enum WorkerCommand {
     /// Create or replace/update
     Create(ServiceConfig),
     Destroy(String),
-    Start(String),
+    Start {
+        service_name: String,
+        pinit_id: Uuid,
+    },
     Stop(String),
     Restart(String),
     Status,

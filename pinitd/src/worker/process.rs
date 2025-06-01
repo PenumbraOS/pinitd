@@ -166,8 +166,13 @@ async fn handle_command(
             // Delete config
             registry.remove_unit(name).await?;
         }
-        WorkerCommand::Start(name) => {
-            registry.service_start(name).await?;
+        WorkerCommand::Start {
+            service_name,
+            pinit_id,
+        } => {
+            registry
+                .service_start_with_id(service_name, pinit_id)
+                .await?;
         }
         WorkerCommand::Stop(name) => {
             registry.service_stop(name).await?;

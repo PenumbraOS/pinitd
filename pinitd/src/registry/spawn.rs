@@ -91,6 +91,7 @@ impl InnerSpawnChild {
         match self {
             InnerSpawnChild::Standard(child) => match child.wait().await {
                 Ok(status) => {
+                    // TODO: This status code is of the wrapper, not the service
                     info!("Process for service \"{name}\" exited with status: {status}",);
                     status.code().map_or_else(
                         || SpawnCommand {

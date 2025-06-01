@@ -1,4 +1,5 @@
 use pinitd_common::{ServiceStatus, unit_config::ServiceConfig};
+use uuid::Uuid;
 
 use crate::error::Result;
 
@@ -10,16 +11,17 @@ pub trait Registry {
     async fn service_names(&self) -> Result<Vec<String>>;
     async fn service_can_autostart(&self, name: String) -> Result<bool>;
 
-    async fn insert_unit(&self, config: ServiceConfig, enabled: bool) -> Result<()>;
-    async fn remove_unit(&self, name: String) -> Result<bool>;
+    async fn insert_unit(&mut self, config: ServiceConfig, enabled: bool) -> Result<()>;
+    async fn remove_unit(&mut self, name: String) -> Result<bool>;
 
     /// Attempts to start the registered service. Returns true if the service was successfully started and
     /// false if the service was already running
-    async fn service_start(&self, name: String) -> Result<bool>;
-    async fn service_stop(&self, name: String) -> Result<()>;
-    async fn service_restart(&self, name: String) -> Result<()>;
+    async fn service_start_with_id(&mut self, name: String, id: Uuid) -> Result<bool>;
+    async fn service_start(&mut self, name: String) -> Result<bool>;
+    async fn service_stop(&mut self, name: String) -> Result<()>;
+    async fn service_restart(&mut self, name: String) -> Result<()>;
 
-    async fn autostart_all(&self) -> Result<()> {
+    async fn autostart_all(&mut self) -> Result<()> {
         // Build current list of registry in case it's mutated during iteration and to drop lock
         let service_names = self.service_names().await?;
 

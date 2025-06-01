@@ -52,7 +52,7 @@ impl Controller {
         let mut registry = ControllerRegistry::new(connection).await?;
         let pms = ProcessManagementService::new(registry.clone()).await?;
         registry.set_pms(pms).await;
-        let controller = Controller { registry };
+        let mut controller = Controller { registry };
 
         controller.registry.load_from_disk().await?;
 
@@ -92,7 +92,7 @@ impl Controller {
             match control_socket.accept().await {
                 Ok((mut stream, _)) => {
                     info!("Accepted new client connection");
-                    let controller_clone = self.clone();
+                    let mut controller_clone = self.clone();
                     let shutdown_token_clone = shutdown_token.clone();
                     tokio::spawn(async move {
                         match controller_clone
@@ -115,7 +115,7 @@ impl Controller {
     }
 
     async fn handle_command<T>(
-        &self,
+        &mut self,
         stream: &mut T,
         shutdown_token: CancellationToken,
     ) -> Result<CLIResponse>

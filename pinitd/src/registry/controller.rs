@@ -13,6 +13,7 @@ use tokio::{
     },
 };
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 use crate::{
     controller::pms::ProcessManagementService,
@@ -63,6 +64,7 @@ impl ControllerRegistryWorker {
 
 #[derive(Clone)]
 pub struct ControllerRegistry {
+    pms: Option<Box<ProcessManagementService>>,
     local: LocalRegistry,
     remote: Arc<Mutex<ControllerRegistryWorker>>,
 }
@@ -75,12 +77,13 @@ impl ControllerRegistry {
         info!("Loading service configurations from {}", CONFIG_DIR);
         let local = LocalRegistry::new_controller(state)?;
         Ok(Self {
+            pms: None,
             local,
             remote: Arc::new(Mutex::new(ControllerRegistryWorker::Connected(connection))),
         })
     }
 
-    pub async fn load_from_disk(&self) -> Result<()> {
+    pub async fn load_from_disk(&mut self) -> Result<()> {
         let mut load_count = 0;
 
         let mut directory = fs::read_dir(CONFIG_DIR).await?;
@@ -116,10 +119,10 @@ impl ControllerRegistry {
     }
 
     pub async fn set_pms(&mut self, pms: ProcessManagementService) {
-        self.local.set_pms(pms).await
+        self.pms = Some(Box::new(pms));
     }
 
-    pub async fn service_reload(&self, name: String) -> Result<Option<ServiceConfig>> {
+    pub async fn service_reload(&mut self, name: String) -> Result<Option<ServiceConfig>> {
         let existing_config = self
             .local
             .with_service(&name, |service| Ok(service.config().clone()))
@@ -143,7 +146,7 @@ impl ControllerRegistry {
     }
 
     pub async fn process_remote_command(
-        &self,
+        &mut self,
         command: CLICommand,
         shutdown_token: CancellationToken,
     ) -> CLIResponse {
@@ -275,7 +278,7 @@ impl ControllerRegistry {
         ServiceConfig::parse(path).await
     }
 
-    async fn insert_unit_with_current_state(&self, config: ServiceConfig) -> Result<()> {
+    async fn insert_unit_with_current_state(&mut self, config: ServiceConfig) -> Result<()> {
         let enabled = self.local.is_enabled(&config.name).await?;
         self.insert_unit(config, enabled).await
     }
@@ -290,7 +293,7 @@ impl Registry for ControllerRegistry {
         self.local.service_can_autostart(name).await
     }
 
-    async fn insert_unit(&self, config: ServiceConfig, enabled: bool) -> Result<()> {
+    async fn insert_unit(&mut self, config: ServiceConfig, enabled: bool) -> Result<()> {
         self.local.insert_unit(config.clone(), enabled).await?;
 
         if config.uid == UID::System {
@@ -303,7 +306,7 @@ impl Registry for ControllerRegistry {
         Ok(())
     }
 
-    async fn remove_unit(&self, name: String) -> Result<bool> {
+    async fn remove_unit(&mut self, name: String) -> Result<bool> {
         let removed_local = self.local.remove_unit(name.clone()).await?;
 
         if removed_local && self.local.is_worker_service(&name).await? {
@@ -318,7 +321,7 @@ impl Registry for ControllerRegistry {
         }
     }
 
-    async fn service_start(&self, name: String) -> Result<bool> {
+    async fn service_start(&mut self, name: String) -> Result<bool> {
         let allow_start = self
             .local
             .with_service(&name, |service| {
@@ -336,19 +339,33 @@ impl Registry for ControllerRegistry {
             return Ok(false);
         }
 
+        let id = Uuid::new_v4();
+        self.pms
+            .as_mut()
+            .unwrap()
+            .register_spawn(id.clone(), name.clone())
+            .await;
+
+        self.service_start_with_id(name, id).await
+    }
+
+    async fn service_start_with_id(&mut self, name: String, id: Uuid) -> Result<bool> {
         if self.local.is_worker_service(&name).await? {
             let result = self
                 .remote_connection()
                 .await?
-                .write_command(WorkerCommand::Start(name))
+                .write_command(WorkerCommand::Start {
+                    service_name: name,
+                    pinit_id: id,
+                })
                 .await?;
             Ok(result == WorkerResponse::Success)
         } else {
-            self.local.service_start(name).await
+            self.local.service_start_with_id(name, id).await
         }
     }
 
-    async fn service_stop(&self, name: String) -> Result<()> {
+    async fn service_stop(&mut self, name: String) -> Result<()> {
         if self.local.is_worker_service(&name).await? {
             self.remote_connection()
                 .await?
@@ -360,7 +377,7 @@ impl Registry for ControllerRegistry {
         }
     }
 
-    async fn service_restart(&self, name: String) -> Result<()> {
+    async fn service_restart(&mut self, name: String) -> Result<()> {
         if self.local.is_worker_service(&name).await? {
             self.remote_connection()
                 .await?
