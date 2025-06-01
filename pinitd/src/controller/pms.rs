@@ -114,6 +114,13 @@ impl ProcessManagementService {
         self.zygote_ids.lock().await.insert(id, service_name);
     }
 
+    pub async fn clear_service(&self, name: &str) {
+        let connection = self.zygote_registrations.lock().await.remove(name);
+        if let Some(connection) = connection {
+            self.zygote_ids.lock().await.remove(&connection.pinit_id);
+        }
+    }
+
     async fn handle_command<T>(
         &mut self,
         stream_rx: &mut T,

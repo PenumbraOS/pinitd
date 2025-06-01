@@ -282,6 +282,12 @@ impl ControllerRegistry {
         let enabled = self.local.is_enabled(&config.name).await?;
         self.insert_unit(config, enabled).await
     }
+
+    async fn pms_stop(&self, name: String) {
+        if let Some(pms) = &self.pms {
+            pms.clear_service(&name).await;
+        }
+    }
 }
 
 impl Registry for ControllerRegistry {
@@ -340,6 +346,7 @@ impl Registry for ControllerRegistry {
         }
 
         let id = Uuid::new_v4();
+        info!("Registering id {id} for \"{name}\"");
         self.pms
             .as_mut()
             .unwrap()
@@ -369,24 +376,33 @@ impl Registry for ControllerRegistry {
         if self.local.is_worker_service(&name).await? {
             self.remote_connection()
                 .await?
-                .write_command(WorkerCommand::Stop(name))
+                .write_command(WorkerCommand::Stop(name.clone()))
                 .await?;
-            Ok(())
         } else {
-            self.local.service_stop(name).await
+            self.local.service_stop(name.clone()).await?;
         }
+
+        // TODO: This could probably be integrated into local somehow
+        self.pms_stop(name).await;
+
+        Ok(())
     }
 
     async fn service_restart(&mut self, name: String) -> Result<()> {
+        // TODO: Reimplement with pinit_id. Currently crashes
         if self.local.is_worker_service(&name).await? {
             self.remote_connection()
                 .await?
-                .write_command(WorkerCommand::Restart(name))
+                .write_command(WorkerCommand::Restart(name.clone()))
                 .await?;
-            Ok(())
         } else {
-            self.local.service_restart(name).await
+            self.local.service_restart(name.clone()).await?;
         }
+
+        // TODO: This could probably be integrated into local somehow
+        self.pms_stop(name).await;
+
+        Ok(())
     }
 
     async fn service_enable(&self, name: String) -> Result<()> {
