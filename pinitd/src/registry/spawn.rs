@@ -159,7 +159,7 @@ fn wrapper_command(command: &str, pinit_id: Uuid, is_zygote: bool) -> Result<Str
     let path = env::current_exe()?;
     let zygote_arg = if is_zygote { "--is-zygote " } else { "" };
     Ok(format!(
-        "{} wrapper {zygote_arg}\"{pinit_id}\" \"{command}\"",
+        "{} monitored-wrapper {zygote_arg}\"{pinit_id}\" \"{command}\"",
         path.display()
     ))
 }

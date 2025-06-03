@@ -3,18 +3,32 @@ use std::{
     fs::File,
     io::Write,
     os::fd::{FromRawFd, RawFd},
+    time::Duration,
 };
+
+use tokio::time::sleep;
 
 use crate::error::{Error, Result};
 
-pub fn extract_and_write_fd() -> Result<()> {
+pub async fn init_zygote_with_fd() {
+    #[cfg(target_os = "android")]
+    {
+        info!("Delaying so Zygote can settle before pid write");
+        sleep(Duration::from_millis(500)).await;
+        if let Err(error) = extract_and_write_fd() {
+            error!("fd error: {error}");
+        }
+    }
+}
+
+fn extract_and_write_fd() -> Result<()> {
     let fd_str = extract_fd().ok_or(Error::Unknown("Could not find fd".into()))?;
     let fd: RawFd = fd_str.parse::<RawFd>()?;
 
     let helper_pid = std::process::id() as u32;
 
     let mut pipe: File = unsafe { File::from_raw_fd(fd) };
-    warn!("Opening fd {fd}, {pipe:?}");
+    info!("Writing pid {helper_pid} to fd {fd}");
     let _ = pipe.write_all(&helper_pid.to_be_bytes());
     let _ = pipe.flush();
 

@@ -7,17 +7,49 @@ use pinitd_common::{
         writable::{ProtocolRead, ProtocolWrite},
     },
 };
-use tokio::{net::TcpStream, process::Command, time::timeout};
+use tokio::{
+    net::TcpStream,
+    process::{Child, Command},
+    time::timeout,
+};
 use uuid::Uuid;
 
-use crate::error::{Error, Result};
+use crate::{
+    error::{Error, Result},
+    zygote::init_zygote_with_fd,
+};
 
 pub struct Wrapper {
     stream: Option<TcpStream>,
 }
 
 impl Wrapper {
-    pub async fn specialize(command: String, pinit_id: Uuid) -> Result<()> {
+    pub async fn specialize_without_monitoring(
+        command: String,
+        using_zygote_spawn: bool,
+    ) -> Result<Child> {
+        if using_zygote_spawn {
+            init_zygote_with_fd().await;
+        }
+
+        info!("Spawning child \"{command}\"");
+        let child = Command::new("sh")
+            .args(&["-c", &command])
+            // TODO: Auto pipe output to Android log?
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+
+        info!("Spawned process with pid {:?}", child.id());
+
+        Ok(child)
+    }
+
+    pub async fn specialize_with_monitoring(
+        command: String,
+        pinit_id: Uuid,
+        using_zygote_spawn: bool,
+    ) -> Result<()> {
         info!("Negociating launch for id {pinit_id}");
         let stream = match TcpStream::connect(PMS_SOCKET_ADDRESS).await {
             Ok(mut stream) => {
@@ -32,17 +64,8 @@ impl Wrapper {
 
         let mut wrapper = Wrapper { stream };
 
-        info!("Spawning child \"{command}\"");
-        let child = Command::new("sh")
-            .args(&["-c", &command])
-            // TODO: Auto pipe output to Android log?
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            // Make sure we clean up if we die
-            .kill_on_drop(true)
-            .spawn()?;
+        let child = Self::specialize_without_monitoring(command, using_zygote_spawn).await?;
 
-        info!("Spawned process with pid {:?}", child.id());
         if let Some(pid) = child.id() {
             let _ = wrapper
                 .write_if_connected(PMSFromRemoteCommand::ProcessAttached(pid))
