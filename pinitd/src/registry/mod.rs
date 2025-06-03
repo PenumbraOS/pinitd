@@ -17,29 +17,6 @@ pub trait Registry {
     /// Attempts to start the registered service. Returns true if the service was successfully started and
     /// false if the service was already running
     async fn service_start_with_id(&mut self, name: String, id: Uuid) -> Result<bool>;
-    async fn service_start(&mut self, name: String) -> Result<bool>;
-    async fn service_stop(&mut self, name: String) -> Result<()>;
-    async fn service_restart(&mut self, name: String) -> Result<()>;
-
-    async fn autostart_all(&mut self) -> Result<()> {
-        // Build current list of registry in case it's mutated during iteration and to drop lock
-        let service_names = self.service_names().await?;
-
-        for name in service_names {
-            let should_start = self.service_can_autostart(name.clone()).await?;
-
-            if !should_start {
-                continue;
-            }
-
-            info!("Autostarting service: {}", name);
-            let _ = self.service_start(name.clone()).await;
-        }
-
-        info!("Autostart sequence complete.");
-
-        Ok(())
-    }
 
     async fn service_enable(&self, name: String) -> Result<()>;
     async fn service_disable(&self, name: String) -> Result<()>;

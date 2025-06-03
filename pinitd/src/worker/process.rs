@@ -177,8 +177,13 @@ async fn handle_command(
         WorkerCommand::Stop(name) => {
             registry.service_stop(name).await?;
         }
-        WorkerCommand::Restart(name) => {
-            registry.service_restart(name).await?;
+        WorkerCommand::Restart {
+            service_name,
+            pinit_id,
+        } => {
+            registry
+                .service_restart_with_id(service_name, pinit_id)
+                .await?;
         }
         WorkerCommand::Status => {
             let status = registry.service_list_all().await?;

@@ -128,6 +128,19 @@ impl LocalRegistry {
         .await
     }
 
+    pub async fn service_stop(&mut self, name: String) -> Result<()> {
+        self.with_service_mut(&name, |service| Ok(service_stop_internal(&name, service)))
+            .await
+    }
+
+    pub async fn service_restart_with_id(&mut self, name: String, pinit_id: Uuid) -> Result<()> {
+        info!("Restarting service \"{name}\"");
+        self.service_stop(name.clone()).await?;
+        self.service_start_with_id(name, pinit_id).await?;
+
+        Ok(())
+    }
+
     fn spawn(&self, name: String, pinit_id: Uuid) -> JoinHandle<()> {
         let inner_name = name.clone();
         let inner_registry = self.clone();
@@ -248,12 +261,6 @@ impl Registry for LocalRegistry {
         .await
     }
 
-    async fn service_start(&mut self, _name: String) -> Result<bool> {
-        Err(Error::Unknown(
-            "Called invalid method service_start on local registry".into(),
-        ))
-    }
-
     async fn service_start_with_id(&mut self, name: String, id: Uuid) -> Result<bool> {
         let handle = self.spawn(name.clone(), id);
 
@@ -264,19 +271,6 @@ impl Registry for LocalRegistry {
             Ok(true)
         })
         .await
-    }
-
-    async fn service_stop(&mut self, name: String) -> Result<()> {
-        self.with_service_mut(&name, |service| Ok(service_stop_internal(&name, service)))
-            .await
-    }
-
-    async fn service_restart(&mut self, name: String) -> Result<()> {
-        info!("Restarting service \"{name}\"");
-        self.service_stop(name.clone()).await?;
-        self.service_start(name).await?;
-
-        Ok(())
     }
 
     async fn service_enable(&self, name: String) -> Result<()> {

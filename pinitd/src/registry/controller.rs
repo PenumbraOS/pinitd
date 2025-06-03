@@ -283,10 +283,102 @@ impl ControllerRegistry {
         self.insert_unit(config, enabled).await
     }
 
+    pub async fn service_start(&mut self, name: String) -> Result<bool> {
+        let allow_start = self
+            .local
+            .with_service(&name, |service| {
+                if !service.enabled() {
+                    warn!("Attempted to start disabled service \"{name}\". Ignoring.",);
+                    return Err(Error::Unknown(format!("Service \"{name}\" is disabled.")));
+                }
+
+                Ok(!matches!(service.state(), ServiceRunState::Running { .. }))
+            })
+            .await?;
+
+        if !allow_start {
+            // Already running
+            return Ok(false);
+        }
+
+        let id = self.register_id(name.clone()).await;
+        self.service_start_with_id(name, id).await
+    }
+
+    pub async fn service_stop(&mut self, name: String) -> Result<()> {
+        if self.local.is_worker_service(&name).await? {
+            self.remote_connection()
+                .await?
+                .write_command(WorkerCommand::Stop(name.clone()))
+                .await?;
+        } else {
+            self.local.service_stop(name.clone()).await?;
+        }
+
+        self.pms_stop(name).await;
+
+        Ok(())
+    }
+
+    pub async fn service_restart(&mut self, name: String) -> Result<()> {
+        // TODO: Reimplement with pinit_id. Currently crashes
+        if self.local.is_worker_service(&name).await? {
+            let pinit_id = self.register_id(name.clone()).await;
+            self.remote_connection()
+                .await?
+                .write_command(WorkerCommand::Restart {
+                    service_name: name.clone(),
+                    pinit_id,
+                })
+                .await?;
+            self.pms_stop(name).await;
+        } else {
+            // Duplicate implementation as in local
+            info!("Restarting service \"{name}\"");
+            self.service_stop(name.clone()).await?;
+            self.pms_stop(name.clone()).await;
+            self.service_start(name).await?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn autostart_all(&mut self) -> Result<()> {
+        // Build current list of registry in case it's mutated during iteration and to drop lock
+        let service_names = self.service_names().await?;
+
+        for name in service_names {
+            let should_start = self.service_can_autostart(name.clone()).await?;
+
+            if !should_start {
+                continue;
+            }
+
+            info!("Autostarting service: {}", name);
+            let _ = self.service_start(name.clone()).await;
+        }
+
+        info!("Autostart sequence complete.");
+
+        Ok(())
+    }
+
     async fn pms_stop(&self, name: String) {
         if let Some(pms) = &self.pms {
             pms.clear_service(&name).await;
         }
+    }
+
+    async fn register_id(&mut self, name: String) -> Uuid {
+        let id = Uuid::new_v4();
+        info!("Registering id {id} for \"{name}\"");
+        self.pms
+            .as_mut()
+            .unwrap()
+            .register_spawn(id.clone(), name.clone())
+            .await;
+
+        id
     }
 }
 
@@ -327,35 +419,6 @@ impl Registry for ControllerRegistry {
         }
     }
 
-    async fn service_start(&mut self, name: String) -> Result<bool> {
-        let allow_start = self
-            .local
-            .with_service(&name, |service| {
-                if !service.enabled() {
-                    warn!("Attempted to start disabled service \"{name}\". Ignoring.",);
-                    return Err(Error::Unknown(format!("Service \"{name}\" is disabled.")));
-                }
-
-                Ok(!matches!(service.state(), ServiceRunState::Running { .. }))
-            })
-            .await?;
-
-        if !allow_start {
-            // Already running
-            return Ok(false);
-        }
-
-        let id = Uuid::new_v4();
-        info!("Registering id {id} for \"{name}\"");
-        self.pms
-            .as_mut()
-            .unwrap()
-            .register_spawn(id.clone(), name.clone())
-            .await;
-
-        self.service_start_with_id(name, id).await
-    }
-
     async fn service_start_with_id(&mut self, name: String, id: Uuid) -> Result<bool> {
         if self.local.is_worker_service(&name).await? {
             let result = self
@@ -370,39 +433,6 @@ impl Registry for ControllerRegistry {
         } else {
             self.local.service_start_with_id(name, id).await
         }
-    }
-
-    async fn service_stop(&mut self, name: String) -> Result<()> {
-        if self.local.is_worker_service(&name).await? {
-            self.remote_connection()
-                .await?
-                .write_command(WorkerCommand::Stop(name.clone()))
-                .await?;
-        } else {
-            self.local.service_stop(name.clone()).await?;
-        }
-
-        // TODO: This could probably be integrated into local somehow
-        self.pms_stop(name).await;
-
-        Ok(())
-    }
-
-    async fn service_restart(&mut self, name: String) -> Result<()> {
-        // TODO: Reimplement with pinit_id. Currently crashes
-        if self.local.is_worker_service(&name).await? {
-            self.remote_connection()
-                .await?
-                .write_command(WorkerCommand::Restart(name.clone()))
-                .await?;
-        } else {
-            self.local.service_restart(name.clone()).await?;
-        }
-
-        // TODO: This could probably be integrated into local somehow
-        self.pms_stop(name).await;
-
-        Ok(())
     }
 
     async fn service_enable(&self, name: String) -> Result<()> {

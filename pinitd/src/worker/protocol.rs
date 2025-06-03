@@ -22,7 +22,10 @@ pub enum WorkerCommand {
         pinit_id: Uuid,
     },
     Stop(String),
-    Restart(String),
+    Restart {
+        service_name: String,
+        pinit_id: Uuid,
+    },
     Status,
     Shutdown,
 }
