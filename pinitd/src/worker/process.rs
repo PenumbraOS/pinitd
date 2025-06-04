@@ -127,6 +127,7 @@ impl WorkerProcess {
 
         build_and_execute(
             1000,
+            None,
             "/data/",
             "com.android.settings",
             "platform:system_app:targetSdkVersion=29:complete",

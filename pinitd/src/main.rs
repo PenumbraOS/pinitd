@@ -6,7 +6,7 @@ use std::env;
 
 #[cfg(target_os = "android")]
 use ai_pin_logger::Config;
-use android_31317_exploit::{ExploitKind, payload};
+use android_31317_exploit::{DEFAULT_TRAILING_NEWLINE_COUNT, ExploitKind, launch_payload};
 use base_log::LevelFilter;
 use clap::Parser;
 use controller::Controller;
@@ -144,8 +144,10 @@ fn init_payload() -> Result<String> {
     let executable = env::current_exe()?;
     let executable = executable.display();
 
-    Ok(payload(
+    Ok(launch_payload(
+        DEFAULT_TRAILING_NEWLINE_COUNT,
         2000,
+        None,
         "/data/local/tmp/",
         "com.android.shell",
         "platform:shell:targetSdkVersion=29:complete",

@@ -1,6 +1,6 @@
 use std::{process, time::Duration};
 
-use android_31317_exploit::force_clear_exploit;
+use android_31317_exploit::{build_and_execute_crash, force_clear_exploit};
 use pinitd_common::{
     CONTROL_SOCKET_ADDRESS, create_core_directories,
     protocol::{
@@ -40,6 +40,8 @@ impl Controller {
         create_core_directories();
 
         let _ = force_clear_exploit();
+        // info!("Attempting Zygote clean crash");
+        // let _ = build_and_execute_crash(true);
         info!("Delaying to allow Zygote to settle");
         sleep(Duration::from_millis(500)).await;
 

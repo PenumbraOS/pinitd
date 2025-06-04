@@ -140,6 +140,7 @@ async fn spawn_zygote_exploit(config: ServiceConfig, pinit_id: Uuid) -> Result<I
 
     build_and_execute(
         config.uid.into(),
+        None,
         "/data/",
         "com.android.settings",
         config.se_info.as_ref().map_or(
