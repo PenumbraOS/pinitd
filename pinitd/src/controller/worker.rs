@@ -18,23 +18,27 @@ use crate::{
 };
 
 pub(crate) struct StartWorkerState {
-    pub connection: WorkerConnection,
+    pub connection: Option<WorkerConnection>,
     pub worker_service_update_rx: mpsc::Receiver<BaseService>,
     pub worker_connected_rx: broadcast::Receiver<WorkerConnectionStatus>,
 }
 
 impl StartWorkerState {
-    pub async fn start() -> Result<Self> {
+    pub async fn start(prevent_spawn: bool) -> Result<Self> {
         let socket = TcpListener::bind(&WORKER_SOCKET_ADDRESS).await?;
         info!("Listening for worker");
 
         let (worker_connected_tx, mut worker_connected_rx) =
             broadcast::channel::<WorkerConnectionStatus>(10);
 
-        // TODO: Retry handling
-        info!("Spawning worker");
-        WorkerProcess::spawn_with_retries(5, worker_connected_rx.resubscribe())?;
-        info!("Spawning worker sent");
+        if !prevent_spawn {
+            // TODO: Retry handling
+            info!("Spawning worker");
+            WorkerProcess::spawn_with_retries(5, worker_connected_rx.resubscribe())?;
+            info!("Spawning worker sent");
+        } else {
+            info!("Skipping worker spawn due to argument");
+        }
 
         let (worker_service_update_tx, worker_service_update_rx) = mpsc::channel::<BaseService>(10);
 
@@ -67,13 +71,21 @@ impl StartWorkerState {
             }
         });
 
+        if prevent_spawn {
+            return Ok(Self {
+                connection: None,
+                worker_connected_rx,
+                worker_service_update_rx,
+            });
+        }
+
         info!("Waiting for worker to report back");
         loop {
             match WorkerConnectionStatus::await_update(&mut worker_connected_rx).await {
                 WorkerConnectionStatus::Connected(connection) => {
                     info!("Worker spawn message received. Continuing...");
                     return Ok(Self {
-                        connection,
+                        connection: Some(connection),
                         worker_connected_rx,
                         worker_service_update_rx,
                     });

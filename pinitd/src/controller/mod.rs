@@ -36,7 +36,7 @@ pub struct Controller {
 }
 
 impl Controller {
-    pub async fn specialize() -> Result<()> {
+    pub async fn specialize(disable_worker: bool) -> Result<()> {
         create_core_directories();
 
         let _ = force_clear_exploit();
@@ -49,7 +49,7 @@ impl Controller {
             connection,
             worker_service_update_rx,
             worker_connected_rx,
-        } = StartWorkerState::start().await?;
+        } = StartWorkerState::start(disable_worker).await?;
 
         let mut registry = ControllerRegistry::new(connection).await?;
         let pms = ProcessManagementService::new(registry.clone()).await?;

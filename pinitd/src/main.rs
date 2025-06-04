@@ -34,7 +34,7 @@ mod zygote;
 #[command(version, about, long_about = None)]
 enum Args {
     /// Specializes this process as the controller, pid 2000 (shell), process
-    Controller(NoAdditionalArgs),
+    Controller(ControllerArgs),
     /// Specializes this process as the worker, pid 1000 (system), process
     Worker(NoAdditionalArgs),
     /// Create custom exploit payload. NOTE: This is for internal use; rely on the pinitd for launching other processes
@@ -45,6 +45,15 @@ enum Args {
     /// Write the wrapper Zygote pid fd back on spawn. Used for spawning pinitd's own processes. NOTE: This is for internal use; rely on the pinitd for launching other processes
     #[command(name = "internal-wrapper")]
     InternalSpawnWrapper(InternalWrapperArgs),
+}
+
+#[derive(Parser, Debug)]
+struct ControllerArgs {
+    #[arg(long)]
+    disable_worker: bool,
+
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    _remaining_args: Vec<String>,
 }
 
 #[derive(Parser, Debug)]
@@ -95,10 +104,10 @@ async fn run() -> Result<()> {
     log_panics::init();
 
     match Args::try_parse()? {
-        Args::Controller(_) => {
+        Args::Controller(args) => {
             init_logging_with_tag("pinitd-controller".into());
             info!("Specializing controller");
-            Ok(Controller::specialize().await?)
+            Ok(Controller::specialize(args.disable_worker).await?)
         }
         Args::Worker(_) => {
             init_logging_with_tag("pinitd-worker".into());
@@ -155,7 +164,7 @@ fn init_payload() -> Result<String> {
         &ExploitKind::Command(format!(
             // Specifically use single quotes to preserve arguments
             // "'i=0;f=0;for a in \"\$@\";do i=\$((i+1));if [ \"\$a\" = com.android.internal.os.WrapperInit ];then eval f=\\\${\$((i+1))};break;fi;done; exec /system/bin/sh -c \"/data/local/tmp/pinitd controller & p=\\\$!; echo \\\$p >/proc/self/fd/\\\$1\" sh \"\$f\"'"
-            "{executable} internal-wrapper \"{executable} controller\"",
+            "{executable} internal-wrapper \"{executable} controller --disable-worker\"",
             // "/data/local/tmp/zygote_pid_writer",
             // "/system/bin/sh -c 'nohup {} controller $0 &'",
         )),
