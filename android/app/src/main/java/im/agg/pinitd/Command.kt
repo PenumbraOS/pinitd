@@ -33,7 +33,8 @@ fun launch(context: Context) {
         Log.w(TAG, "Payload set")
         startSettings(context)
 
-        context.contentResolver.delete(EXEMPTIONS_SETTING_URI, null, null)
+        // TODO: Add success/failure check
+        // context.contentResolver.delete(EXEMPTIONS_SETTING_URI, null, null)
 
         Log.w(TAG, "Trampoline complete")
 
