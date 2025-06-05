@@ -269,10 +269,14 @@ impl ControllerRegistry {
             .await
     }
 
-    async fn remote_connection(&self) -> Result<WorkerConnection> {
+    async fn remote_connection(&self, allow_disconnected: bool) -> Result<WorkerConnection> {
         match self.remote.lock().await.clone() {
             ControllerRegistryWorker::Connected(connection) => Ok(connection),
             ControllerRegistryWorker::Disconnected { mut status_rx, .. } => {
+                if allow_disconnected {
+                    return Err(Error::WorkerProtocolError("Worker disconnected".into()));
+                }
+
                 match status_rx.recv().await {
                     Ok(connection) => Ok(connection),
                     Err(err) => Err(Error::WorkerConnectionRecvError(err)),
@@ -314,7 +318,7 @@ impl ControllerRegistry {
 
     pub async fn service_stop(&mut self, name: String) -> Result<()> {
         if self.local.is_worker_service(&name).await? {
-            self.remote_connection()
+            self.remote_connection(true)
                 .await?
                 .write_command(WorkerCommand::Stop(name.clone()))
                 .await?;
@@ -331,7 +335,7 @@ impl ControllerRegistry {
         // TODO: Reimplement with pinit_id. Currently crashes
         if self.local.is_worker_service(&name).await? {
             let pinit_id = self.register_id(name.clone()).await;
-            self.remote_connection()
+            self.remote_connection(true)
                 .await?
                 .write_command(WorkerCommand::Restart {
                     service_name: name.clone(),
@@ -402,7 +406,7 @@ impl Registry for ControllerRegistry {
         self.local.insert_unit(config.clone(), enabled).await?;
 
         if config.uid == UID::System {
-            self.remote_connection()
+            self.remote_connection(true)
                 .await?
                 .write_command(WorkerCommand::Create(config))
                 .await?;
@@ -416,7 +420,7 @@ impl Registry for ControllerRegistry {
 
         if removed_local && self.local.is_worker_service(&name).await? {
             let response = self
-                .remote_connection()
+                .remote_connection(true)
                 .await?
                 .write_command(WorkerCommand::Destroy(name))
                 .await?;
@@ -429,7 +433,7 @@ impl Registry for ControllerRegistry {
     async fn service_start_with_id(&mut self, name: String, id: Uuid) -> Result<bool> {
         if self.local.is_worker_service(&name).await? {
             let result = self
-                .remote_connection()
+                .remote_connection(true)
                 .await?
                 .write_command(WorkerCommand::Start {
                     service_name: name,
@@ -459,7 +463,7 @@ impl Registry for ControllerRegistry {
     }
 
     async fn shutdown(&self) -> Result<()> {
-        let mut connection = self.remote_connection().await?;
+        let mut connection = self.remote_connection(true).await?;
         connection.shutdown().await;
         connection.write_command(WorkerCommand::Shutdown).await?;
         Ok(())
