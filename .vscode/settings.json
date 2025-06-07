@@ -1,3 +1,8 @@
 {
-  "rust-analyzer.cargo.target": "aarch64-linux-android"
+  "rust-analyzer.cargo.target": "aarch64-linux-android",
+  "rust-analyzer.cargo.extraEnv": {
+    "CXX": "/Users/adam/Library/Android/sdk/ndk/29.0.13113456/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android32-clang++",
+    "CC": "/Users/adam/Library/Android/sdk/ndk/29.0.13113456/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android32-clang",
+    "AR": "/Users/adam/Library/Android/sdk/ndk/29.0.13113456/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ar"
+  }
 }

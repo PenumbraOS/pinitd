@@ -163,6 +163,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d71b6127be86fdcfddb610f7182ac57211d4b18a3e9c82eb2d17662f2227ad6a"
 
 [[package]]
+name = "cc"
+version = "1.2.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "956a5e21988b87f372569b66183b78babf23ebc2e744b733e4350a752c4dafac"
+dependencies = [
+ "shlex",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -282,6 +291,16 @@ checksum = "186e05a59d4c50738528153b83b0b0194d3a29507dfec16eccd4b342903397d0"
 dependencies = [
  "log",
  "regex",
+]
+
+[[package]]
+name = "file-lock"
+version = "2.1.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "040b48f80a749da50292d0f47a1e2d5bf1d772f52836c07f64bfccc62ba6e664"
+dependencies = [
+ "cc",
+ "libc",
 ]
 
 [[package]]
@@ -511,6 +530,7 @@ dependencies = [
  "android_31317_exploit",
  "bincode",
  "clap",
+ "file-lock",
  "log",
  "log-panics",
  "nix",

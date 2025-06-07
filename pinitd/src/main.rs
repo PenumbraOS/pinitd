@@ -52,6 +52,9 @@ struct ControllerArgs {
     #[arg(long)]
     disable_worker: bool,
 
+    #[arg(long)]
+    is_zygote: bool,
+
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     _remaining_args: Vec<String>,
 }
@@ -73,6 +76,9 @@ struct ZygoteWrapperArgs {
 
 #[derive(Parser, Debug)]
 struct InternalWrapperArgs {
+    #[arg(long)]
+    is_zygote: bool,
+
     #[arg(index = 1)]
     command: String,
 
@@ -107,7 +113,7 @@ async fn run() -> Result<()> {
         Args::Controller(args) => {
             init_logging_with_tag("pinitd-controller".into());
             info!("Specializing controller");
-            Ok(Controller::specialize(args.disable_worker).await?)
+            Ok(Controller::specialize(args.disable_worker, args.is_zygote).await?)
         }
         Args::Worker(_) => {
             init_logging_with_tag("pinitd-worker".into());
@@ -128,7 +134,7 @@ async fn run() -> Result<()> {
         }
         Args::InternalSpawnWrapper(args) => {
             init_logging_with_tag("pinitd-wrapper-int".into());
-            Wrapper::specialize_without_monitoring(args.command, true).await?;
+            Wrapper::specialize_without_monitoring(args.command, args.is_zygote, true).await?;
             Ok(())
         }
     }
@@ -164,6 +170,7 @@ fn init_payload() -> Result<String> {
         &ExploitKind::Command(format!(
             // Specifically use single quotes to preserve arguments
             // "'i=0;f=0;for a in \"\$@\";do i=\$((i+1));if [ \"\$a\" = com.android.internal.os.WrapperInit ];then eval f=\\\${\$((i+1))};break;fi;done; exec /system/bin/sh -c \"/data/local/tmp/pinitd controller & p=\\\$!; echo \\\$p >/proc/self/fd/\\\$1\" sh \"\$f\"'"
+            // "{executable} controller --is-zygote --disable-worker",
             "{executable} internal-wrapper \"{executable} controller --disable-worker\"",
             // "/data/local/tmp/zygote_pid_writer",
             // "/system/bin/sh -c 'nohup {} controller $0 &'",

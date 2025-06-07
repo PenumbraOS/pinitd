@@ -27,7 +27,27 @@ impl Wrapper {
     pub async fn specialize_without_monitoring(
         command: String,
         using_zygote_spawn: bool,
+        check_bitness: bool,
     ) -> Result<Child> {
+        if check_bitness {
+            if let Ok(arch_output) = Command::new("uname")
+                .args(&["-m"])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .await
+            {
+                if let Ok(stdout) = String::from_utf8(arch_output.stdout) {
+                    let stdout = stdout.trim();
+                    if stdout != "aarch64" {
+                        return Err(Error::ZygoteError(format!(
+                            "Process is not 64 bit ({stdout}). Dying"
+                        )));
+                    }
+                }
+            }
+        }
+
         if using_zygote_spawn {
             init_zygote_with_fd().await;
         }
@@ -64,7 +84,7 @@ impl Wrapper {
 
         let mut wrapper = Wrapper { stream };
 
-        let child = Self::specialize_without_monitoring(command, using_zygote_spawn).await?;
+        let child = Self::specialize_without_monitoring(command, using_zygote_spawn, false).await?;
 
         if let Some(pid) = child.id() {
             let _ = wrapper

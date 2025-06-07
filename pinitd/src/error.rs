@@ -36,7 +36,9 @@ pub enum Error {
     ExploitError(#[from] android_31317_exploit::error::Error),
     #[error("Common error: {0}")]
     CommonError(#[from] pinitd_common::error::Error),
-    #[error("Unknown error {0}")]
+    #[error("Zygote error: {0}")]
+    ZygoteError(String),
+    #[error("Unknown error: {0}")]
     Unknown(String),
 }
 

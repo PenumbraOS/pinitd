@@ -13,8 +13,8 @@ use crate::error::{Error, Result};
 pub async fn init_zygote_with_fd() {
     #[cfg(target_os = "android")]
     {
-        info!("Delaying so Zygote can settle before pid write");
-        sleep(Duration::from_millis(500)).await;
+        // info!("Delaying so Zygote can settle before pid write");
+        // sleep(Duration::from_millis(500)).await;
         if let Err(error) = extract_and_write_fd() {
             error!("fd error: {error}");
         }

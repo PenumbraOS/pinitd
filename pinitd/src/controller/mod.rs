@@ -1,8 +1,9 @@
-use std::{process, time::Duration};
+use std::{fs::OpenOptions, process, time::Duration};
 
-use android_31317_exploit::{build_and_execute_crash, force_clear_exploit};
+use android_31317_exploit::force_clear_exploit;
+use file_lock::{FileLock, FileOptions};
 use pinitd_common::{
-    CONTROL_SOCKET_ADDRESS, create_core_directories,
+    CONTROL_SOCKET_ADDRESS, CONTROLLER_LOCK_FILE, create_core_directories,
     protocol::{
         CLICommand, CLIResponse,
         writable::{ProtocolRead, ProtocolWrite},
@@ -24,6 +25,7 @@ use crate::{
     error::Result,
     registry::{Registry, controller::ControllerRegistry},
     worker::connection::WorkerConnectionStatus,
+    zygote::init_zygote_with_fd,
 };
 
 pub mod pms;
@@ -36,14 +38,30 @@ pub struct Controller {
 }
 
 impl Controller {
-    pub async fn specialize(disable_worker: bool) -> Result<()> {
-        create_core_directories();
+    pub async fn specialize(disable_worker: bool, is_zygote: bool) -> Result<()> {
+        // Acquire lock
+        // TODO: We have to have a wrapped process so Zygote can't kill us
+        let options = FileOptions::new().read(true).write(true).create(true);
 
-        let _ = force_clear_exploit();
-        // info!("Attempting Zygote clean crash");
-        // let _ = build_and_execute_crash(true);
+        let lock = match FileLock::lock(CONTROLLER_LOCK_FILE, false, options) {
+            Ok(lock) => lock,
+            Err(err) => {
+                error!("Controller lock is already owned. Dying: {err}");
+                return Ok(());
+            }
+        };
+
+        if is_zygote {
+            init_zygote_with_fd().await;
+        }
+
         info!("Delaying to allow Zygote to settle");
-        sleep(Duration::from_millis(500)).await;
+        sleep(Duration::from_millis(50)).await;
+
+        info!("Sending exploit force clear");
+        let _ = force_clear_exploit();
+
+        create_core_directories();
 
         let StartWorkerState {
             connection,
@@ -80,6 +98,7 @@ impl Controller {
         info!("Shutting down");
 
         shutdown(controller.registry).await?;
+        let _ = lock.unlock();
 
         info!("After shutdown");
 

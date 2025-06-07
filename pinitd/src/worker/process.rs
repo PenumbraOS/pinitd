@@ -132,7 +132,7 @@ impl WorkerProcess {
             "com.android.settings",
             "platform:system_app:targetSdkVersion=29:complete",
             &ExploitKind::Command(format!(
-                "{executable} internal-wrapper \"{executable} worker\""
+                "{executable} internal-wrapper --is-zygote \"{executable} worker\""
             )),
             &TriggerApp::new(
                 "com.android.settings".into(),
