@@ -8,3 +8,4 @@ adb shell chmod +x /data/local/tmp/bin/pinitd-cli
 cp target/aarch64-linux-android/release/pinitd android/app/src/main/jniLibs/arm64-v8a/libpinitd.so
 cd android && ./gradlew installDebug
 adb shell pm grant im.agg.pinitd android.permission.WRITE_SECURE_SETTINGS
+adb shell pm grant im.agg.pinitd android.permission.READ_LOGS
