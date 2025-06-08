@@ -71,11 +71,11 @@ impl WorkerProcess {
         retry_count: usize,
         worker_connected_rx: broadcast::Receiver<WorkerConnectionStatus>,
     ) -> Result<()> {
-        if let Err(error) = Self::spawn() {
-            error!("Failed worker spawn {error}");
-        }
-
         tokio::spawn(async move {
+            if let Err(error) = Self::spawn().await {
+                error!("Failed worker spawn {error}");
+            }
+
             for i in 0..retry_count {
                 let mut inner_rx = worker_connected_rx.resubscribe();
                 let did_complete = Arc::new(Mutex::new(false));
@@ -109,7 +109,7 @@ impl WorkerProcess {
 
                 sleep(Duration::from_secs(5)).await;
 
-                let _ = Self::spawn();
+                let _ = Self::spawn().await;
             }
         });
 
@@ -118,7 +118,7 @@ impl WorkerProcess {
 
     /// Spawn a remote process to act as the system worker
     #[cfg(target_os = "android")]
-    fn spawn() -> Result<()> {
+    async fn spawn() -> Result<()> {
         use android_31317_exploit::{ExploitKind, TriggerApp, build_and_execute};
         use std::env;
 
@@ -140,14 +140,16 @@ impl WorkerProcess {
             ),
             None,
             true,
-        )?;
+            true,
+        )
+        .await?;
 
         Ok(())
     }
 
     /// Spawn a remote process to act as the system worker
     #[cfg(not(target_os = "android"))]
-    fn spawn() -> Result<()> {
+    async fn spawn() -> Result<()> {
         let process_path = std::env::args().next().unwrap();
         tokio::process::Command::new(process_path)
             .arg("worker")

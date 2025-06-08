@@ -151,7 +151,9 @@ async fn spawn_zygote_exploit(config: ServiceConfig, pinit_id: Uuid) -> Result<I
         &trigger_app,
         config.nice_name.as_deref(),
         true,
-    )?;
+        true,
+    )
+    .await?;
 
     Ok(InnerSpawnChild::ZygoteExploit)
 }
