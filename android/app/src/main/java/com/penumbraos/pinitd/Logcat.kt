@@ -1,4 +1,4 @@
-package im.agg.pinitd
+package com.penumbraos.pinitd
 
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope

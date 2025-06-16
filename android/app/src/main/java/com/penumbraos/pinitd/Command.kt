@@ -1,4 +1,4 @@
-package im.agg.pinitd
+package com.penumbraos.pinitd
 
 import android.content.Context
 import android.content.Intent
@@ -9,7 +9,6 @@ import kotlinx.coroutines.CoroutineScope
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import kotlin.time.Duration.Companion.milliseconds
-import kotlin.time.Duration.Companion.seconds
 
 const val TAG = "pinitd-trampoline"
 val EXEMPTIONS_SETTING_URI: Uri = Settings.Global.getUriFor("hidden_api_blacklist_exemptions")

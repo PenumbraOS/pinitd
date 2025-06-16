@@ -1,4 +1,4 @@
-package im.agg.pinitd
+package com.penumbraos.pinitd
 
 import android.app.Activity
 import android.os.Bundle
@@ -7,10 +7,9 @@ import android.os.Looper
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
-// adb shell am start -n im.agg.pinitd/.DummyActivity
+// adb shell am start -n com.penumbraos.pinitd/.DummyActivity
 class DummyActivity : Activity() {
     val scope = CoroutineScope(Dispatchers.Main)
     val handler = Handler(Looper.getMainLooper())

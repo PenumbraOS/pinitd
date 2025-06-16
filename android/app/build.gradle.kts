@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "im.agg.pinitd"
+    namespace = "com.penumbraos.pinitd"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "im.agg.pinitd"
+        applicationId = "com.penumbraos.pinitd"
         minSdk = 32
         targetSdk = 35
         versionCode = 1

@@ -29,7 +29,7 @@ pub const CONTROLLER_LOCK_FILE: &str = "/sdcard/penumbra/etc/pinitd/pinitd.lock"
 #[cfg(not(target_os = "android"))]
 pub const CONTROLLER_LOCK_FILE: &str = "test_data/pinitd/pinitd.lock";
 
-pub const PACKAGE_NAME: &str = "im.agg.pinitd";
+pub const PACKAGE_NAME: &str = "com.penumbraos.pinitd";
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum ServiceRunState {

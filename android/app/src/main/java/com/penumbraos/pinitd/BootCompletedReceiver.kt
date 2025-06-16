@@ -1,4 +1,4 @@
-package im.agg.pinitd
+package com.penumbraos.pinitd
 
 import android.content.BroadcastReceiver
 import android.content.Context
