@@ -1,5 +1,6 @@
 use std::{fmt::Display, path::PathBuf};
 
+use dependency_graph::Node;
 use serde::{Deserialize, Serialize};
 
 use crate::UID;
@@ -82,4 +83,22 @@ pub struct ServiceConfig {
     pub se_info: Option<String>,
     pub nice_name: Option<String>,
     pub unit_file_path: PathBuf,
+    pub dependencies: ServiceDependencies,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+pub struct ServiceDependencies {
+    pub wants: Vec<String>,
+}
+
+impl Node for ServiceConfig {
+    type DependencyType = String;
+
+    fn dependencies(&self) -> &[Self::DependencyType] {
+        &self.dependencies.wants
+    }
+
+    fn matches(&self, dependency: &Self::DependencyType) -> bool {
+        &self.name == dependency
+    }
 }

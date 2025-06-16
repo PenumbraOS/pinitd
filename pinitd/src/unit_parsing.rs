@@ -3,7 +3,9 @@ use std::path::Path;
 use ini::Ini;
 use pinitd_common::{
     UID,
-    unit_config::{ExploitTriggerActivity, RestartPolicy, ServiceCommand, ServiceConfig},
+    unit_config::{
+        ExploitTriggerActivity, RestartPolicy, ServiceCommand, ServiceConfig, ServiceDependencies,
+    },
 };
 use tokio::fs;
 
@@ -38,6 +40,15 @@ impl ParsableServiceConfig for ServiceConfig {
         let mut nice_name = None;
         let mut autostart = false;
         let mut restart = RestartPolicy::None;
+
+        let mut dependencies = ServiceDependencies::default();
+        if let Some(unit_section) = ini.section(Some("Unit")) {
+            for (property, value) in unit_section.iter() {
+                if property == "Wants" {
+                    dependencies.wants = value.split(',').map(|s| s.trim().to_string()).collect();
+                }
+            }
+        }
 
         for (property, value) in service_section.iter() {
             match property {
@@ -255,6 +266,7 @@ impl ParsableServiceConfig for ServiceConfig {
             autostart,
             restart,
             unit_file_path: path.to_path_buf(),
+            dependencies,
         })
     }
 }

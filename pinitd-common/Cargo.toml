@@ -9,3 +9,4 @@ bincode = { version = "2.0", features = ["serde"] }
 tokio = { version = "1.44" }
 uuid = { version = "1.17.0", features = ["serde"] }
 thiserror = "2.0"
+dependency-graph = "0.1.5"

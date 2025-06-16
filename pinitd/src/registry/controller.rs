@@ -1,5 +1,6 @@
 use std::{path::Path, sync::Arc};
 
+use dependency_graph::{DependencyGraph, Step};
 use pinitd_common::{
     CONFIG_DIR, ServiceRunState, ServiceStatus, UID,
     protocol::{CLICommand, CLIResponse},
@@ -20,7 +21,7 @@ use crate::{
     error::{Error, Result},
     state::StoredState,
     types::{BaseService, Service},
-    unit_config::ParsableServiceConfig,
+    unit_parsing::ParsableServiceConfig,
     worker::{
         connection::{WorkerConnection, WorkerConnectionStatus},
         protocol::{WorkerCommand, WorkerResponse},
@@ -312,6 +313,9 @@ impl ControllerRegistry {
             return Ok(false);
         }
 
+        // Start dependencies first (Wants dependencies)
+        self.start_dependencies(&name).await?;
+
         let id = self.register_id(name.clone()).await;
         self.service_start_with_id(name, id).await
     }
@@ -358,16 +362,16 @@ impl ControllerRegistry {
         // Build current list of registry in case it's mutated during iteration and to drop lock
         let service_names = self.service_names().await?;
 
+        let mut autostart_services = Vec::new();
         for name in service_names {
             let should_start = self.service_can_autostart(name.clone()).await?;
-
-            if !should_start {
-                continue;
+            if should_start {
+                autostart_services.push(name);
             }
-
-            info!("Autostarting service: {}", name);
-            let _ = self.service_start(name.clone()).await;
         }
+
+        self.start_services_with_dependencies(autostart_services)
+            .await?;
 
         info!("Autostart sequence complete.");
 
@@ -390,6 +394,102 @@ impl ControllerRegistry {
             .await;
 
         id
+    }
+
+    async fn start_dependencies(&mut self, service_name: &str) -> Result<()> {
+        let dependencies = self
+            .local
+            .with_service(service_name, |service| {
+                Ok(service.config().dependencies.wants.clone())
+            })
+            .await?;
+
+        for dep_name in dependencies {
+            info!(
+                "Starting dependency \"{}\" for service \"{}\"",
+                dep_name, service_name
+            );
+
+            if let Err(_) = self.local.with_service(&dep_name, |_| Ok(())).await {
+                warn!(
+                    "Dependency \"{}\" not found for service \"{}\". Skipping",
+                    dep_name, service_name
+                );
+                continue;
+            }
+
+            let is_running = self
+                .local
+                .with_service(&dep_name, |service| {
+                    Ok(matches!(service.state(), ServiceRunState::Running { .. }))
+                })
+                .await?;
+
+            if !is_running {
+                if let Err(err) = self.service_start_internal(dep_name.clone()).await {
+                    warn!(
+                        "Failed to start dependency \"{}\" for service \"{}\": {}",
+                        dep_name, service_name, err
+                    );
+                }
+            } else {
+                info!("Dependency \"{}\" is already running", dep_name);
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn service_start_internal(&mut self, name: String) -> Result<bool> {
+        let allow_start = self
+            .local
+            .with_service(&name, |service| {
+                if !service.enabled() {
+                    warn!("Attempted to start disabled service \"{name}\". Ignoring.",);
+                    return Err(Error::Unknown(format!("Service \"{name}\" is disabled.")));
+                }
+
+                Ok(!matches!(service.state(), ServiceRunState::Running { .. }))
+            })
+            .await?;
+
+        if !allow_start {
+            // Already running
+            return Ok(false);
+        }
+
+        let id = self.register_id(name.clone()).await;
+        self.service_start_with_id(name, id).await
+    }
+
+    async fn start_services_with_dependencies(&mut self, service_names: Vec<String>) -> Result<()> {
+        let mut service_configs = Vec::new();
+        for name in &service_names {
+            let config = self
+                .local
+                .with_service(name, |service| Ok(service.config().clone()))
+                .await?;
+            service_configs.push(config);
+        }
+
+        let dependency_graph = DependencyGraph::from(&service_configs[..]);
+
+        // Start services in dependency order
+        for step in dependency_graph {
+            match step {
+                Step::Resolved(service_config) => {
+                    info!("Autostarting service: \"{}\"", service_config.name);
+                    let _ = self
+                        .service_start_internal(service_config.name.clone())
+                        .await;
+                }
+                Step::Unresolved(dep_name) => {
+                    warn!("Unresolved dependency: \"{}\"", dep_name);
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
