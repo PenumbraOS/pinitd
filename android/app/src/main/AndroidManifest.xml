@@ -15,7 +15,7 @@
             </intent-filter>
         </receiver>
         <activity
-            android:name=".DummyActivity"
+            android:name=".ManualLaunchActivity"
             android:exported="true"
             />
     </application>
