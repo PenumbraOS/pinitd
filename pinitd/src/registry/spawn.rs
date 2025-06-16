@@ -27,11 +27,14 @@ impl SpawnCommand {
 
         info!("Spawning process for \"{name}\": \"{}\"", config.command);
 
-        let child = if config.uid != UID::Shell && config.uid != UID::System {
-            spawn_zygote_exploit(config, pinit_id).await
-        } else {
-            spawn_standard(config, pinit_id).await
-        };
+        let (command, force_standard_spawn) = expanded_command(&config.command).await?;
+
+        let child =
+            if !force_standard_spawn && config.uid != UID::Shell && config.uid != UID::System {
+                spawn_zygote_exploit(config, command, pinit_id).await
+            } else {
+                spawn_standard(command, pinit_id).await
+            };
 
         match child {
             Ok(mut child) => {
@@ -117,8 +120,7 @@ impl InnerSpawnChild {
     }
 }
 
-async fn spawn_standard(config: ServiceConfig, pinit_id: Uuid) -> Result<InnerSpawnChild> {
-    let command = expanded_command(&config.command).await?;
+async fn spawn_standard(command: String, pinit_id: Uuid) -> Result<InnerSpawnChild> {
     let command = wrapper_command(&command, pinit_id, false)?;
 
     let child = Command::new("sh")
@@ -133,8 +135,11 @@ async fn spawn_standard(config: ServiceConfig, pinit_id: Uuid) -> Result<InnerSp
     Ok(InnerSpawnChild::Standard(child))
 }
 
-async fn spawn_zygote_exploit(config: ServiceConfig, pinit_id: Uuid) -> Result<InnerSpawnChild> {
-    let command = expanded_command(&config.command).await?;
+async fn spawn_zygote_exploit(
+    config: ServiceConfig,
+    command: String,
+    pinit_id: Uuid,
+) -> Result<InnerSpawnChild> {
     let command = wrapper_command(&command, pinit_id, true)?;
     let trigger_app = zygote_trigger_activity(&config.command);
 
@@ -167,9 +172,9 @@ fn wrapper_command(command: &str, pinit_id: Uuid, is_zygote: bool) -> Result<Str
     ))
 }
 
-async fn expanded_command(command: &ServiceCommand) -> Result<String> {
-    match command {
-        ServiceCommand::Command { command, .. } => Ok(command.clone()),
+async fn expanded_command(command: &ServiceCommand) -> Result<(String, bool)> {
+    let command = match command {
+        ServiceCommand::Command { command, .. } => command.clone(),
         ServiceCommand::LaunchPackageBinary {
             package,
             content_path,
@@ -192,7 +197,11 @@ async fn expanded_command(command: &ServiceCommand) -> Result<String> {
                 command
             };
 
-            Ok(command)
+            command
+        }
+        ServiceCommand::PackageActivity { package, activity } => {
+            let command = format!("am start -n {package}/{activity}");
+            return Ok((command, true));
         }
         ServiceCommand::JVMClass {
             package,
@@ -215,11 +224,13 @@ async fn expanded_command(command: &ServiceCommand) -> Result<String> {
                 ""
             };
 
-            Ok(format!(
+            format!(
                 "/system/bin/app_process -cp {package_path} {jvm_args} /system/bin --application {class} {args}"
-            ).trim().to_string())
+            ).trim().to_string()
         }
-    }
+    };
+
+    Ok((command, false))
 }
 
 fn zygote_trigger_activity(command: &ServiceCommand) -> TriggerApp {
@@ -230,6 +241,7 @@ fn zygote_trigger_activity(command: &ServiceCommand) -> TriggerApp {
         ServiceCommand::LaunchPackageBinary {
             trigger_activity, ..
         } => trigger_activity,
+        ServiceCommand::PackageActivity { .. } => &None,
         ServiceCommand::JVMClass {
             trigger_activity, ..
         } => trigger_activity,

@@ -61,50 +61,24 @@ impl ParsableServiceConfig for ServiceConfig {
                         trigger_activity: None,
                     })
                 }
+                "ExecActivity" => {
+                    let (package, activity) = extract_package_path(value, "ExecActivity")?;
+                    command = Some(ServiceCommand::PackageActivity { package, activity });
+                }
                 "ExecPackageBinary" => {
-                    let mut iter = value.trim().splitn(2, "/");
-                    let package = iter.next();
-                    let content_path = iter.next();
-
-                    if package.is_none() {
-                        return Err(Error::ConfigError(
-                            "Could not parse ExecPackageBinary: No package".into(),
-                        ));
-                    }
-
-                    if content_path.is_none() {
-                        return Err(Error::ConfigError(
-                            "Could not parse ExecPackageBinary: No content path".into(),
-                        ));
-                    }
-
+                    let (package, content_path) = extract_package_path(value, "ExecPackageBinary")?;
                     command = Some(ServiceCommand::LaunchPackageBinary {
-                        package: package.unwrap().to_string(),
-                        content_path: content_path.unwrap().to_string(),
+                        package,
+                        content_path,
                         args: None,
                         trigger_activity: None,
                     });
                 }
                 "ExecJvmClass" => {
-                    let mut iter = value.trim().splitn(2, "/");
-                    let package = iter.next();
-                    let class = iter.next();
-
-                    if package.is_none() {
-                        return Err(Error::ConfigError(
-                            "Could not parse ExecJvmClass: No package".into(),
-                        ));
-                    }
-
-                    if class.is_none() {
-                        return Err(Error::ConfigError(
-                            "Could not parse ExecJvmClass: No class".into(),
-                        ));
-                    }
-
+                    let (package, class) = extract_package_path(value, "ExecJvmClass")?;
                     command = Some(ServiceCommand::JVMClass {
-                        package: package.unwrap().to_string(),
-                        class: class.unwrap().to_string(),
+                        package,
+                        class,
                         command_args: None,
                         jvm_args: None,
                         trigger_activity: None,
@@ -113,26 +87,8 @@ impl ParsableServiceConfig for ServiceConfig {
                 "JvmArgs" => extra_jvm_args = Some(value.trim().to_string()),
                 "ExecArgs" => extra_command_args = Some(value.trim().to_string()),
                 "TriggerActivity" => {
-                    let mut iter = value.trim().splitn(2, "/");
-                    let package = iter.next();
-                    let activity = iter.next();
-
-                    if package.is_none() {
-                        return Err(Error::ConfigError(
-                            "Could not parse TriggerActivity: No package".into(),
-                        ));
-                    }
-
-                    if activity.is_none() {
-                        return Err(Error::ConfigError(
-                            "Could not parse TriggerActivity: No activity".into(),
-                        ));
-                    }
-
-                    trigger_app = Some(ExploitTriggerActivity {
-                        package: package.unwrap().to_string(),
-                        activity: activity.unwrap().to_string(),
-                    });
+                    let (package, activity) = extract_package_path(value, "TriggerActivity")?;
+                    trigger_app = Some(ExploitTriggerActivity { package, activity });
                 }
                 "Uid" => {
                     uid = value
@@ -211,6 +167,22 @@ impl ParsableServiceConfig for ServiceConfig {
                         trigger_activity.replace(activity);
                     }
                 }
+                ServiceCommand::PackageActivity {
+                    ref package,
+                    ref activity,
+                } => {
+                    if package.is_empty() {
+                        return Err(Error::ConfigError(
+                            "\"ExecActivity\" must contain a package".into(),
+                        ));
+                    }
+
+                    if activity.is_empty() {
+                        return Err(Error::ConfigError(
+                            "\"ExecActivity\" must contain an activity".into(),
+                        ));
+                    }
+                }
                 ServiceCommand::JVMClass {
                     ref package,
                     ref class,
@@ -268,5 +240,21 @@ impl ParsableServiceConfig for ServiceConfig {
             unit_file_path: path.to_path_buf(),
             dependencies,
         })
+    }
+}
+
+fn extract_package_path(value: &str, field_name: &str) -> Result<(String, String)> {
+    let mut iter = value.trim().splitn(2, "/");
+    let package = iter.next();
+    let content_path = iter.next();
+
+    match (package, content_path) {
+        (Some(package), Some(content_path)) => Ok((package.into(), content_path.into())),
+        (None, _) => Err(Error::ConfigError(format!(
+            "Could not parse {field_name}: No package"
+        ))),
+        (_, None) => Err(Error::ConfigError(format!(
+            "Could not parse {field_name}: No content path"
+        ))),
     }
 }

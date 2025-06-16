@@ -45,6 +45,8 @@ pub enum ServiceCommand {
         args: Option<String>,
         trigger_activity: Option<ExploitTriggerActivity>,
     },
+    /// Launches a normal Android Activity directly through AMS. Does not rely on the Zygote vulnerability
+    PackageActivity { package: String, activity: String },
     /// Launches a JVM process using `app_process`. The classpath will be set to the package APK. Does not provide a full Android app context
     JVMClass {
         package: String,
@@ -65,7 +67,12 @@ impl Display for ServiceCommand {
                 package,
                 content_path,
                 ..
-            } => f.write_fmt(format_args!("Package command: {content_path} at {package}")),
+            } => f.write_fmt(format_args!(
+                "Package binary command: {content_path} at {package}"
+            )),
+            ServiceCommand::PackageActivity { package, activity } => {
+                f.write_fmt(format_args!("Package activity: {package}/{activity}"))
+            }
             ServiceCommand::JVMClass { package, class, .. } => {
                 f.write_fmt(format_args!("JVM class command: {class} at {package}"))
             }
