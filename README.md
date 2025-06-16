@@ -46,6 +46,10 @@ The `pinitd-cli` command provides the following subcommands:
 
 Like `systemd`, `pinitd` uses an ini unit file format. The available properties are:
 
+### Service
+
+The following properties are under the `[Service]` header:
+
 | Property          | Required                        | Description                                                                                      | Format                                                |
 | :---------------- | :------------------------------ | :----------------------------------------------------------------------------------------------- | :---------------------------------------------------- |
 | `Name`            | Yes                             | A unique identifier for the service                                                              | String                                                |
@@ -60,6 +64,14 @@ Like `systemd`, `pinitd` uses an ini unit file format. The available properties 
 | `NiceName`        | No                              | A user-friendly name for the service. Only supported for `Uid=System`                            | String                                                |
 | `Autostart`       | No                              | Whether the service should start on boot                                                         | `true` or `false`. Defaults to `false`.               |
 | `Restart`         | No                              | The restart policy for the service                                                               | `Always`, `OnFailure`, or `None`. Defaults to `None`. |
+
+### Unit
+
+The following properties are under the `[Unit]` header:
+
+| Property | Required | Description                                                                                                                                                                                           | Format |
+| :------- | :------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :----- |
+| `Wants`  | No       | A comma separated list of service names that should be started before this one. This only _starts_ the dependency beforehand, it does not care if the launch was successful or if the process crashes | String |
 
 ## Example
 
