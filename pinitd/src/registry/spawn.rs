@@ -170,7 +170,7 @@ fn wrapper_command(command: &str, pinit_id: Uuid, is_zygote: bool) -> Result<Str
 async fn expanded_command(command: &ServiceCommand) -> Result<String> {
     match command {
         ServiceCommand::Command { command, .. } => Ok(command.clone()),
-        ServiceCommand::LaunchPackage {
+        ServiceCommand::LaunchPackageBinary {
             package,
             content_path,
             args,
@@ -227,7 +227,7 @@ fn zygote_trigger_activity(command: &ServiceCommand) -> TriggerApp {
         ServiceCommand::Command {
             trigger_activity, ..
         } => trigger_activity,
-        ServiceCommand::LaunchPackage {
+        ServiceCommand::LaunchPackageBinary {
             trigger_activity, ..
         } => trigger_activity,
         ServiceCommand::JVMClass {

@@ -50,20 +50,20 @@ Like `systemd`, `pinitd` uses an ini unit file format. The available properties 
 
 The following properties are under the `[Service]` header:
 
-| Property          | Required                        | Description                                                                                      | Format                                                |
-| :---------------- | :------------------------------ | :----------------------------------------------------------------------------------------------- | :---------------------------------------------------- |
-| `Name`            | Yes                             | A unique identifier for the service                                                              | String                                                |
-| `Exec`            | Yes (if others are not present) | The command to execute                                                                           | String                                                |
-| `ExecPackage`     | Yes (if others are not present) | Launches a binary embedded in an APK, looking up the package path automatically                  | `[PACKAGE]/[SUBPATH TO BINARY]` t`                    |
-| `ExecJvmClass`    | Yes (if others are not present) | Launches a JVM process using `app_process`                                                       | `[PACKAGE]/[CLASS]`                                   |
-| `ExecArgs`        | No                              | Extra arguments for `ExecPackage` or `ExecJvmClass`                                              | String                                                |
-| `JvmArgs`         | No                              | Extra JVM arguments for `ExecJvmClass`                                                           | String                                                |
-| `TriggerActivity` | No                              | An Android activity to trigger for exploit purposes. Defaults to `com.android.settings.Settings` | `[PACKAGE]/[ACTIVITY]`                                |
-| `Uid`             | No                              | The user ID to run the service as                                                                | `System`, `Shell`, or a number. Defaults to `Shell`.  |
-| `SeInfo`          | No                              | The SELinux context for the service                                                              | String                                                |
-| `NiceName`        | No                              | A user-friendly name for the service. Only supported for `Uid=System`                            | String                                                |
-| `Autostart`       | No                              | Whether the service should start on boot                                                         | `true` or `false`. Defaults to `false`.               |
-| `Restart`         | No                              | The restart policy for the service                                                               | `Always`, `OnFailure`, or `None`. Defaults to `None`. |
+| Property            | Required                        | Description                                                                                      | Format                                                |
+| :------------------ | :------------------------------ | :----------------------------------------------------------------------------------------------- | :---------------------------------------------------- |
+| `Name`              | Yes                             | A unique identifier for the service                                                              | String                                                |
+| `Exec`              | Yes (if others are not present) | The command to execute                                                                           | String                                                |
+| `ExecPackageBinary` | Yes (if others are not present) | Launches a binary embedded in an APK, looking up the package path automatically                  | `[PACKAGE]/[SUBPATH TO BINARY]` t`                    |
+| `ExecJvmClass`      | Yes (if others are not present) | Launches a JVM process using `app_process`                                                       | `[PACKAGE]/[CLASS]`                                   |
+| `ExecArgs`          | No                              | Extra arguments for `ExecPackageBinary` or `ExecJvmClass`                                        | String                                                |
+| `JvmArgs`           | No                              | Extra JVM arguments for `ExecJvmClass`                                                           | String                                                |
+| `TriggerActivity`   | No                              | An Android activity to trigger for exploit purposes. Defaults to `com.android.settings.Settings` | `[PACKAGE]/[ACTIVITY]`                                |
+| `Uid`               | No                              | The user ID to run the service as                                                                | `System`, `Shell`, or a number. Defaults to `Shell`.  |
+| `SeInfo`            | No                              | The SELinux context for the service                                                              | String                                                |
+| `NiceName`          | No                              | A user-friendly name for the service. Only supported for `Uid=System`                            | String                                                |
+| `Autostart`         | No                              | Whether the service should start on boot                                                         | `true` or `false`. Defaults to `false`.               |
+| `Restart`           | No                              | The restart policy for the service                                                               | `Always`, `OnFailure`, or `None`. Defaults to `None`. |
 
 ### Unit
 

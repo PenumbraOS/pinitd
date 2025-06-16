@@ -39,7 +39,7 @@ pub enum ServiceCommand {
         trigger_activity: Option<ExploitTriggerActivity>,
     },
     /// Launches a binary contained within an APK. Will look up the APK path, then apply `content_path` on top of that to find the binary to launch
-    LaunchPackage {
+    LaunchPackageBinary {
         package: String,
         content_path: String,
         args: Option<String>,
@@ -61,7 +61,7 @@ impl Display for ServiceCommand {
             ServiceCommand::Command { command, .. } => {
                 f.write_fmt(format_args!("Command: {command}"))
             }
-            ServiceCommand::LaunchPackage {
+            ServiceCommand::LaunchPackageBinary {
                 package,
                 content_path,
                 ..

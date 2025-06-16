@@ -61,24 +61,24 @@ impl ParsableServiceConfig for ServiceConfig {
                         trigger_activity: None,
                     })
                 }
-                "ExecPackage" => {
+                "ExecPackageBinary" => {
                     let mut iter = value.trim().splitn(2, "/");
                     let package = iter.next();
                     let content_path = iter.next();
 
                     if package.is_none() {
                         return Err(Error::ConfigError(
-                            "Could not parse ExecPackage: No package".into(),
+                            "Could not parse ExecPackageBinary: No package".into(),
                         ));
                     }
 
                     if content_path.is_none() {
                         return Err(Error::ConfigError(
-                            "Could not parse ExecPackage: No content path".into(),
+                            "Could not parse ExecPackageBinary: No content path".into(),
                         ));
                     }
 
-                    command = Some(ServiceCommand::LaunchPackage {
+                    command = Some(ServiceCommand::LaunchPackageBinary {
                         package: package.unwrap().to_string(),
                         content_path: content_path.unwrap().to_string(),
                         args: None,
@@ -185,7 +185,7 @@ impl ParsableServiceConfig for ServiceConfig {
                         trigger_activity.replace(activity);
                     }
                 }
-                ServiceCommand::LaunchPackage {
+                ServiceCommand::LaunchPackageBinary {
                     ref package,
                     ref content_path,
                     ref mut args,
@@ -193,13 +193,13 @@ impl ParsableServiceConfig for ServiceConfig {
                 } => {
                     if package.is_empty() {
                         return Err(Error::ConfigError(
-                            "\"ExecPackage\" must contain a package".into(),
+                            "\"ExecPackageBinary\" must contain a package".into(),
                         ));
                     }
 
                     if content_path.is_empty() {
                         return Err(Error::ConfigError(
-                            "\"ExecPackage\" must contain a content path".into(),
+                            "\"ExecPackageBinary\" must contain a content path".into(),
                         ));
                     }
 
@@ -247,7 +247,7 @@ impl ParsableServiceConfig for ServiceConfig {
             command
         } else {
             return Err(Error::ConfigError(
-                "\"Exec\", \"ExecPackage\", or \"ExecJvmClass\" must be provided".into(),
+                "\"Exec\", \"ExecPackageBinary\", or \"ExecJvmClass\" must be provided".into(),
             ));
         };
 
