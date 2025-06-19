@@ -20,7 +20,12 @@ pub struct SpawnCommand {
 }
 
 impl SpawnCommand {
-    pub async fn spawn(registry: LocalRegistry, name: String, pinit_id: Uuid) -> Result<Self> {
+    pub async fn spawn(
+        registry: LocalRegistry,
+        name: String,
+        pinit_id: Uuid,
+        force_zygote_spawn: bool,
+    ) -> Result<Self> {
         let config = registry
             .with_service(&name, |service| Ok(service.config().clone()))
             .await?;
@@ -29,12 +34,13 @@ impl SpawnCommand {
 
         let (command, force_standard_spawn) = expanded_command(&config.command).await?;
 
-        let child =
-            if !force_standard_spawn && config.uid != UID::Shell && config.uid != UID::System {
-                spawn_zygote_exploit(config, command, pinit_id).await
-            } else {
-                spawn_standard(command, pinit_id).await
-            };
+        let child = if !force_standard_spawn
+            && ((config.uid != UID::Shell && config.uid != UID::System) || force_zygote_spawn)
+        {
+            spawn_zygote_exploit(config, command, pinit_id).await
+        } else {
+            spawn_standard(command, pinit_id).await
+        };
 
         match child {
             Ok(mut child) => {

@@ -68,9 +68,9 @@ fun startApp(name: String, context: Context, intent: Intent?) {
             context.startActivity(intent)
             Log.w(TAG, "Intent sent for $name")
         } else {
-            Log.e(TAG, "App not found")
+            Log.e(TAG, "Zygote trigger app not found")
         }
     } catch (e: Exception) {
-        Log.e(TAG, "App launch error: ${e.message}")
+        Log.e(TAG, "Zygote trigger app launch error: ${e.message}")
     }
 }

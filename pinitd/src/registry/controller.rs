@@ -68,10 +68,11 @@ pub struct ControllerRegistry {
     pms: Option<Box<ProcessManagementService>>,
     local: LocalRegistry,
     remote: Arc<Mutex<ControllerRegistryWorker>>,
+    disable_worker: bool,
 }
 
 impl ControllerRegistry {
-    pub async fn new(connection: Option<WorkerConnection>) -> Result<Self> {
+    pub async fn new(connection: Option<WorkerConnection>, disable_worker: bool) -> Result<Self> {
         let state = StoredState::load().await?;
         info!("Loaded enabled state for: {:?}", state.enabled_services);
 
@@ -88,6 +89,7 @@ impl ControllerRegistry {
             pms: None,
             local,
             remote: Arc::new(Mutex::new(connection)),
+            disable_worker,
         })
     }
 
@@ -321,7 +323,7 @@ impl ControllerRegistry {
     }
 
     pub async fn service_stop(&mut self, name: String) -> Result<()> {
-        if self.local.is_worker_service(&name).await? {
+        if self.is_worker_service(&name).await? {
             self.remote_connection(true)
                 .await?
                 .write_command(WorkerCommand::Stop(name.clone()))
@@ -337,7 +339,7 @@ impl ControllerRegistry {
 
     pub async fn service_restart(&mut self, name: String) -> Result<()> {
         // TODO: Reimplement with pinit_id. Currently crashes
-        if self.local.is_worker_service(&name).await? {
+        if self.is_worker_service(&name).await? {
             let pinit_id = self.register_id(name.clone()).await;
             self.remote_connection(true)
                 .await?
@@ -491,6 +493,14 @@ impl ControllerRegistry {
 
         Ok(())
     }
+
+    async fn is_worker_service(&self, name: &str) -> Result<bool> {
+        if self.disable_worker {
+            return Ok(false);
+        }
+
+        self.local.is_worker_service(name).await
+    }
 }
 
 impl Registry for ControllerRegistry {
@@ -518,7 +528,7 @@ impl Registry for ControllerRegistry {
     async fn remove_unit(&mut self, name: String) -> Result<bool> {
         let removed_local = self.local.remove_unit(name.clone()).await?;
 
-        if removed_local && self.local.is_worker_service(&name).await? {
+        if removed_local && self.is_worker_service(&name).await? {
             let response = self
                 .remote_connection(true)
                 .await?
@@ -531,7 +541,7 @@ impl Registry for ControllerRegistry {
     }
 
     async fn service_start_with_id(&mut self, name: String, id: Uuid) -> Result<bool> {
-        if self.local.is_worker_service(&name).await? {
+        if self.is_worker_service(&name).await? {
             let result = self
                 .remote_connection(true)
                 .await?

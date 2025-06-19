@@ -1,4 +1,4 @@
-use std::{fs::OpenOptions, process, time::Duration};
+use std::{process, time::Duration};
 
 use android_31317_exploit::force_clear_exploit;
 use file_lock::{FileLock, FileOptions};
@@ -69,7 +69,7 @@ impl Controller {
             worker_connected_rx,
         } = StartWorkerState::start(disable_worker).await?;
 
-        let mut registry = ControllerRegistry::new(connection).await?;
+        let mut registry = ControllerRegistry::new(connection, disable_worker).await?;
         let pms = ProcessManagementService::new(registry.clone()).await?;
         registry.set_pms(pms).await;
         let mut controller = Controller { registry };

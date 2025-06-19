@@ -54,6 +54,10 @@ impl LocalRegistry {
         Ok(registry)
     }
 
+    async fn is_worker(&self) -> bool {
+        self.0.lock().await.controller_connection.is_some()
+    }
+
     async fn with_registry<F, R>(&self, func: F) -> Result<R>
     where
         F: FnOnce(MutexGuard<'_, InnerServiceRegistry>) -> Result<R>,
@@ -141,7 +145,7 @@ impl LocalRegistry {
         Ok(())
     }
 
-    fn spawn(&self, name: String, pinit_id: Uuid) -> JoinHandle<()> {
+    fn spawn(&self, name: String, pinit_id: Uuid, force_zygote_spawn: bool) -> JoinHandle<()> {
         let inner_name = name.clone();
         let inner_registry = self.clone();
         tokio::spawn(async move {
@@ -150,8 +154,13 @@ impl LocalRegistry {
                 if let Ok(SpawnCommand {
                     exit_code,
                     exit_message,
-                }) =
-                    SpawnCommand::spawn(inner_registry.clone(), inner_name.clone(), pinit_id).await
+                }) = SpawnCommand::spawn(
+                    inner_registry.clone(),
+                    inner_name.clone(),
+                    pinit_id,
+                    force_zygote_spawn,
+                )
+                .await
                 {
                     let mut expected_stop = false;
 
@@ -262,7 +271,10 @@ impl Registry for LocalRegistry {
     }
 
     async fn service_start_with_id(&mut self, name: String, id: Uuid) -> Result<bool> {
-        let handle = self.spawn(name.clone(), id);
+        // If we're not a worker process, but we have this marked as a worker service, we can't spawn it without going through Zygote
+        let force_zygote_spawn =
+            !self.is_worker().await && self.is_worker_service(&name).await.map_or(false, |b| b);
+        let handle = self.spawn(name.clone(), id, force_zygote_spawn);
 
         // Some time after start we should be able to acquire the lock to preserve this handle
         self.with_service_mut(&name, |service| {
