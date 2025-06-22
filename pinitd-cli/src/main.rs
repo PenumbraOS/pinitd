@@ -98,7 +98,6 @@ async fn main() -> Result<()> {
         CLIResponse::Config(config) => {
             println!("Name: {}", config.name);
             println!("Command: {}", config.command);
-            println!("UID: {:?}", config.uid);
             println!("Autostart: {}", config.autostart);
             println!("Restart: {:?}", config.restart);
             if let Some(nice_name) = config.nice_name {

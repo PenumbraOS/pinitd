@@ -4,7 +4,7 @@ use crate::error::{Error, Result};
 use android_31317_exploit::{ExploitKind, TriggerApp, build_and_execute};
 use pinitd_common::{
     ServiceRunState, UID,
-    unit_config::{ServiceCommand, ServiceConfig},
+    unit_config::{ServiceCommand, ServiceCommandKind, ServiceConfig},
 };
 use tokio::{
     process::{Child, Command},
@@ -35,7 +35,8 @@ impl SpawnCommand {
         let (command, force_standard_spawn) = expanded_command(&config.command).await?;
 
         let child = if !force_standard_spawn
-            && ((config.uid != UID::Shell && config.uid != UID::System) || force_zygote_spawn)
+            && ((config.command.uid != UID::Shell && config.command.uid != UID::System)
+                || force_zygote_spawn)
         {
             spawn_zygote_exploit(config, command, pinit_id).await
         } else {
@@ -150,7 +151,7 @@ async fn spawn_zygote_exploit(
     let trigger_app = zygote_trigger_activity(&config.command);
 
     build_and_execute(
-        config.uid.into(),
+        config.command.uid.into(),
         None,
         Some(3003),
         "/data/",
@@ -180,16 +181,16 @@ fn wrapper_command(command: &str, pinit_id: Uuid, is_zygote: bool) -> Result<Str
 }
 
 async fn expanded_command(command: &ServiceCommand) -> Result<(String, bool)> {
-    let command = match command {
-        ServiceCommand::Command { command, .. } => command.clone(),
-        ServiceCommand::LaunchPackageBinary {
+    let command = match &command.kind {
+        ServiceCommandKind::Command { command, .. } => command.clone(),
+        ServiceCommandKind::LaunchPackageBinary {
             package,
             content_path,
             args,
             ..
         } => {
-            let package_path = fetch_package_path(package).await?;
-            let path = PathBuf::from(&package_path);
+            let package_path = fetch_package_path(&package).await?;
+            let path = PathBuf::from(package_path);
             let path = path.join(
                 content_path
                     .strip_prefix("/")
@@ -206,27 +207,27 @@ async fn expanded_command(command: &ServiceCommand) -> Result<(String, bool)> {
 
             command
         }
-        ServiceCommand::PackageActivity { package, activity } => {
+        ServiceCommandKind::PackageActivity { package, activity } => {
             let command = format!("am start -n {package}/{activity}");
             return Ok((command, true));
         }
-        ServiceCommand::JVMClass {
+        ServiceCommandKind::JVMClass {
             package,
             class,
             command_args,
             jvm_args,
             ..
         } => {
-            let package_path = fetch_package_path(package).await?;
+            let package_path = fetch_package_path(&package).await?;
 
             let args = if let Some(command_args) = command_args {
-                &command_args
+                command_args
             } else {
                 ""
             };
 
             let jvm_args = if let Some(jvm_args) = jvm_args {
-                &jvm_args
+                jvm_args
             } else {
                 ""
             };
@@ -241,15 +242,15 @@ async fn expanded_command(command: &ServiceCommand) -> Result<(String, bool)> {
 }
 
 fn zygote_trigger_activity(command: &ServiceCommand) -> TriggerApp {
-    let trigger_activity = match command {
-        ServiceCommand::Command {
+    let trigger_activity = match &command.kind {
+        ServiceCommandKind::Command {
             trigger_activity, ..
         } => trigger_activity,
-        ServiceCommand::LaunchPackageBinary {
+        ServiceCommandKind::LaunchPackageBinary {
             trigger_activity, ..
         } => trigger_activity,
-        ServiceCommand::PackageActivity { .. } => &None,
-        ServiceCommand::JVMClass {
+        ServiceCommandKind::PackageActivity { .. } => &None,
+        ServiceCommandKind::JVMClass {
             trigger_activity, ..
         } => trigger_activity,
     }

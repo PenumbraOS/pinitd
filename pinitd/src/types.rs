@@ -50,7 +50,7 @@ impl Service {
     pub fn status(&self) -> ServiceStatus {
         ServiceStatus {
             name: self.inner.config.name.clone(),
-            uid: self.inner.config.uid.clone(),
+            uid: self.inner.config.command.uid.clone(),
             enabled: self.inner.enabled,
             state: self.inner.state.clone(),
             config_path: self.inner.config.unit_file_path.clone(),

@@ -295,7 +295,7 @@ impl ControllerRegistry {
     }
 
     async fn load_unit_config(&self, path: &Path) -> Result<ServiceConfig> {
-        ServiceConfig::parse(path).await
+        ServiceConfig::parse(path, self.local_service_uid()).await
     }
 
     async fn insert_unit_with_current_state(&mut self, config: ServiceConfig) -> Result<()> {
@@ -521,7 +521,7 @@ impl Registry for ControllerRegistry {
     async fn insert_unit(&mut self, config: ServiceConfig, enabled: bool) -> Result<()> {
         self.local.insert_unit(config.clone(), enabled).await?;
 
-        if config.uid == self.worker_service_uid() {
+        if config.command.uid == self.worker_service_uid() {
             self.remote_connection(true)
                 .await?
                 .write_command(WorkerCommand::Create(config))

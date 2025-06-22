@@ -4,7 +4,8 @@ use ini::Ini;
 use pinitd_common::{
     UID,
     unit_config::{
-        ExploitTriggerActivity, RestartPolicy, ServiceCommand, ServiceConfig, ServiceDependencies,
+        ExploitTriggerActivity, RestartPolicy, ServiceCommand, ServiceCommandKind, ServiceConfig,
+        ServiceDependencies,
     },
 };
 use tokio::fs;
@@ -12,11 +13,11 @@ use tokio::fs;
 use crate::error::{Error, Result};
 
 pub trait ParsableServiceConfig {
-    async fn parse(path: &Path) -> Result<ServiceConfig>;
+    async fn parse(path: &Path, local_uid: UID) -> Result<ServiceConfig>;
 }
 
 impl ParsableServiceConfig for ServiceConfig {
-    async fn parse(path: &Path) -> Result<Self> {
+    async fn parse(path: &Path, local_uid: UID) -> Result<Self> {
         let content = fs::read_to_string(path).await.or_else(|_| {
             Err(Error::Unknown(format!(
                 "Failed to read unit file {:?}",
@@ -31,7 +32,7 @@ impl ParsableServiceConfig for ServiceConfig {
             .ok_or_else(|| Error::ConfigError("Missing [Service] section".into()))?;
 
         let mut name = None;
-        let mut command = None;
+        let mut command_kind = None;
         let mut extra_command_args = None;
         let mut extra_jvm_args = None;
         let mut trigger_app = None;
@@ -56,18 +57,18 @@ impl ParsableServiceConfig for ServiceConfig {
                     name = Some(value.trim().to_string());
                 }
                 "Exec" => {
-                    command = Some(ServiceCommand::Command {
+                    command_kind = Some(ServiceCommandKind::Command {
                         command: value.trim().to_string(),
                         trigger_activity: None,
-                    })
+                    });
                 }
                 "ExecActivity" => {
                     let (package, activity) = extract_package_path(value, "ExecActivity")?;
-                    command = Some(ServiceCommand::PackageActivity { package, activity });
+                    command_kind = Some(ServiceCommandKind::PackageActivity { package, activity });
                 }
                 "ExecPackageBinary" => {
                     let (package, content_path) = extract_package_path(value, "ExecPackageBinary")?;
-                    command = Some(ServiceCommand::LaunchPackageBinary {
+                    command_kind = Some(ServiceCommandKind::LaunchPackageBinary {
                         package,
                         content_path,
                         args: None,
@@ -76,7 +77,7 @@ impl ParsableServiceConfig for ServiceConfig {
                 }
                 "ExecJvmClass" => {
                     let (package, class) = extract_package_path(value, "ExecJvmClass")?;
-                    command = Some(ServiceCommand::JVMClass {
+                    command_kind = Some(ServiceCommandKind::JVMClass {
                         package,
                         class,
                         command_args: None,
@@ -127,9 +128,9 @@ impl ParsableServiceConfig for ServiceConfig {
             return Err(Error::ConfigError("\"Name\" must be provided".into()));
         };
 
-        let command = if let Some(mut command) = command {
-            match command {
-                ServiceCommand::Command {
+        let command = if let Some(mut command_kind) = command_kind {
+            match command_kind {
+                ServiceCommandKind::Command {
                     ref command,
                     ref mut trigger_activity,
                 } => {
@@ -140,8 +141,13 @@ impl ParsableServiceConfig for ServiceConfig {
                     if let Some(activity) = trigger_app {
                         trigger_activity.replace(activity);
                     }
+
+                    ServiceCommand {
+                        kind: command_kind,
+                        uid: uid.clone(),
+                    }
                 }
-                ServiceCommand::LaunchPackageBinary {
+                ServiceCommandKind::LaunchPackageBinary {
                     ref package,
                     ref content_path,
                     ref mut args,
@@ -166,8 +172,13 @@ impl ParsableServiceConfig for ServiceConfig {
                     if let Some(activity) = trigger_app {
                         trigger_activity.replace(activity);
                     }
+
+                    ServiceCommand {
+                        kind: command_kind,
+                        uid: uid.clone(),
+                    }
                 }
-                ServiceCommand::PackageActivity {
+                ServiceCommandKind::PackageActivity {
                     ref package,
                     ref activity,
                 } => {
@@ -182,8 +193,14 @@ impl ParsableServiceConfig for ServiceConfig {
                             "\"ExecActivity\" must contain an activity".into(),
                         ));
                     }
+
+                    // Always use controller UID
+                    ServiceCommand {
+                        kind: command_kind,
+                        uid: local_uid,
+                    }
                 }
-                ServiceCommand::JVMClass {
+                ServiceCommandKind::JVMClass {
                     ref package,
                     ref class,
                     ref mut command_args,
@@ -213,13 +230,16 @@ impl ParsableServiceConfig for ServiceConfig {
                     if let Some(activity) = trigger_app {
                         trigger_activity.replace(activity);
                     }
+
+                    ServiceCommand {
+                        kind: command_kind,
+                        uid: uid.clone(),
+                    }
                 }
             }
-
-            command
         } else {
             return Err(Error::ConfigError(
-                "\"Exec\", \"ExecPackageBinary\", or \"ExecJvmClass\" must be provided".into(),
+                "An \"Exec*\" field must be provided".into(),
             ));
         };
 
@@ -232,7 +252,6 @@ impl ParsableServiceConfig for ServiceConfig {
         Ok(Self {
             name,
             command,
-            uid,
             se_info,
             nice_name,
             autostart,

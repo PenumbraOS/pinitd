@@ -32,7 +32,7 @@ pub struct ExploitTriggerActivity {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub enum ServiceCommand {
+pub enum ServiceCommandKind {
     /// Launches an arbitrary command
     Command {
         command: String,
@@ -57,26 +57,38 @@ pub enum ServiceCommand {
     },
 }
 
-impl Display for ServiceCommand {
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ServiceCommand {
+    pub kind: ServiceCommandKind,
+    pub uid: UID,
+}
+
+impl Display for ServiceCommandKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ServiceCommand::Command { command, .. } => {
+            ServiceCommandKind::Command { command, .. } => {
                 f.write_fmt(format_args!("Command: {command}"))
             }
-            ServiceCommand::LaunchPackageBinary {
+            ServiceCommandKind::LaunchPackageBinary {
                 package,
                 content_path,
                 ..
             } => f.write_fmt(format_args!(
                 "Package binary command: {content_path} at {package}"
             )),
-            ServiceCommand::PackageActivity { package, activity } => {
+            ServiceCommandKind::PackageActivity { package, activity } => {
                 f.write_fmt(format_args!("Package activity: {package}/{activity}"))
             }
-            ServiceCommand::JVMClass { package, class, .. } => {
+            ServiceCommandKind::JVMClass { package, class, .. } => {
                 f.write_fmt(format_args!("JVM class command: {class} at {package}"))
             }
         }
+    }
+}
+
+impl Display for ServiceCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("{} (uid: {:?})", self.kind, self.uid))
     }
 }
 
@@ -86,7 +98,6 @@ pub struct ServiceConfig {
     pub command: ServiceCommand,
     pub autostart: bool,
     pub restart: RestartPolicy,
-    pub uid: UID,
     pub se_info: Option<String>,
     pub nice_name: Option<String>,
     pub unit_file_path: PathBuf,

@@ -125,7 +125,7 @@ impl LocalRegistry {
 
     pub async fn is_worker_service(&self, name: &str) -> Result<bool> {
         self.with_service(name, |service| {
-            Ok(service.config().uid == self.worker_service_uid())
+            Ok(service.config().command.uid == self.worker_service_uid())
         })
         .await
     }
