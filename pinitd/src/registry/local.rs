@@ -29,33 +29,42 @@ struct InnerServiceRegistry {
 }
 
 #[derive(Clone)]
-pub struct LocalRegistry(Arc<Mutex<InnerServiceRegistry>>);
+pub struct LocalRegistry {
+    inner: Arc<Mutex<InnerServiceRegistry>>,
+    use_system_domain: bool,
+}
 
 impl LocalRegistry {
-    pub fn new_controller(stored_state: StoredState) -> Result<Self> {
+    pub fn new_controller(stored_state: StoredState, use_system_domain: bool) -> Result<Self> {
         let inner = InnerServiceRegistry {
             stored_state,
             registry: HashMap::new(),
             controller_connection: None,
         };
 
-        let registry = LocalRegistry(Arc::new(Mutex::new(inner)));
+        let registry = LocalRegistry {
+            inner: Arc::new(Mutex::new(inner)),
+            use_system_domain,
+        };
         Ok(registry)
     }
 
-    pub fn new_worker(connection: ControllerConnection) -> Result<Self> {
+    pub fn new_worker(connection: ControllerConnection, use_shell_domain: bool) -> Result<Self> {
         let inner = InnerServiceRegistry {
             stored_state: StoredState::dummy(),
             registry: HashMap::new(),
             controller_connection: Some(connection),
         };
 
-        let registry = LocalRegistry(Arc::new(Mutex::new(inner)));
+        let registry = LocalRegistry {
+            inner: Arc::new(Mutex::new(inner)),
+            use_system_domain: !use_shell_domain,
+        };
         Ok(registry)
     }
 
     async fn is_worker(&self) -> bool {
-        self.0.lock().await.controller_connection.is_some()
+        self.inner.lock().await.controller_connection.is_some()
     }
 
     async fn with_registry<F, R>(&self, func: F) -> Result<R>
@@ -71,7 +80,7 @@ impl LocalRegistry {
         F: FnOnce(MutexGuard<'_, InnerServiceRegistry>) -> FR,
         FR: IntoFuture<Output = Result<R>>,
     {
-        let registry_lock = self.0.lock().await;
+        let registry_lock = self.inner.lock().await;
         let result = func(registry_lock).await?;
         Ok(result)
     }
@@ -80,7 +89,7 @@ impl LocalRegistry {
     where
         F: FnOnce(&Service) -> Result<R>,
     {
-        let registry_lock = self.0.lock().await;
+        let registry_lock = self.inner.lock().await;
         let service = registry_lock
             .registry
             .get(name)
@@ -93,7 +102,7 @@ impl LocalRegistry {
     where
         F: FnOnce(&mut SyncedService) -> Result<R>,
     {
-        let mut registry_lock = self.0.lock().await;
+        let mut registry_lock = self.inner.lock().await;
         let connection = registry_lock.controller_connection.clone();
         let service = registry_lock
             .registry
@@ -116,8 +125,7 @@ impl LocalRegistry {
 
     pub async fn is_worker_service(&self, name: &str) -> Result<bool> {
         self.with_service(name, |service| {
-            info!("Config {:?}", service.config());
-            Ok(service.config().uid == UID::System)
+            Ok(service.config().uid == self.worker_service_uid())
         })
         .await
     }
@@ -378,6 +386,22 @@ impl Registry for LocalRegistry {
             registry.stored_state.clone().save()
         })
         .await
+    }
+
+    fn local_service_uid(&self) -> UID {
+        if self.use_system_domain {
+            UID::System
+        } else {
+            UID::Shell
+        }
+    }
+
+    fn worker_service_uid(&self) -> UID {
+        if self.use_system_domain {
+            UID::Shell
+        } else {
+            UID::System
+        }
     }
 }
 

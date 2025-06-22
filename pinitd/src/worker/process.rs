@@ -21,13 +21,13 @@ use super::connection::WorkerConnectionStatus;
 pub struct WorkerProcess;
 
 impl WorkerProcess {
-    pub async fn specialize() -> Result<()> {
+    pub async fn specialize(use_shell_domain: bool) -> Result<()> {
         info!("Connecting to controller");
 
         let mut connection = ControllerConnection::open().await?;
         info!("Controller connected");
 
-        let mut registry = LocalRegistry::new_worker(connection.clone())?;
+        let mut registry = LocalRegistry::new_worker(connection.clone(), use_shell_domain)?;
         let token = CancellationToken::new();
 
         loop {
@@ -127,6 +127,7 @@ impl WorkerProcess {
 
         build_and_execute(
             1000,
+            None,
             None,
             "/data/",
             "com.android.settings",

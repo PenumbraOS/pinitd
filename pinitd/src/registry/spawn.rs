@@ -152,6 +152,7 @@ async fn spawn_zygote_exploit(
     build_and_execute(
         config.uid.into(),
         None,
+        Some(3003),
         "/data/",
         "com.android.settings",
         config.se_info.as_ref().map_or(

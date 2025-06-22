@@ -1,4 +1,4 @@
-use pinitd_common::{ServiceStatus, unit_config::ServiceConfig};
+use pinitd_common::{ServiceStatus, UID, unit_config::ServiceConfig};
 use uuid::Uuid;
 
 use crate::error::Result;
@@ -25,4 +25,10 @@ pub trait Registry {
     async fn service_list_all(&self) -> Result<Vec<ServiceStatus>>;
 
     async fn shutdown(&self) -> Result<()>;
+
+    /// Returns the UID for local "standard" (non-Zygote) spawns. Either `UID::System` or `UID::Shell`
+    fn local_service_uid(&self) -> UID;
+
+    /// Returns the UID for worker spawns. Either `UID::System` or `UID::Shell`
+    fn worker_service_uid(&self) -> UID;
 }

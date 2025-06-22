@@ -68,16 +68,21 @@ pub struct ControllerRegistry {
     pms: Option<Box<ProcessManagementService>>,
     local: LocalRegistry,
     remote: Arc<Mutex<ControllerRegistryWorker>>,
+    use_system_domain: bool,
     disable_worker: bool,
 }
 
 impl ControllerRegistry {
-    pub async fn new(connection: Option<WorkerConnection>, disable_worker: bool) -> Result<Self> {
+    pub async fn new(
+        connection: Option<WorkerConnection>,
+        use_system_domain: bool,
+        disable_worker: bool,
+    ) -> Result<Self> {
         let state = StoredState::load().await?;
         info!("Loaded enabled state for: {:?}", state.enabled_services);
 
         info!("Loading service configurations from {}", CONFIG_DIR);
-        let local = LocalRegistry::new_controller(state)?;
+        let local = LocalRegistry::new_controller(state, use_system_domain)?;
 
         let connection = if let Some(connection) = connection {
             ControllerRegistryWorker::Connected(connection)
@@ -89,6 +94,7 @@ impl ControllerRegistry {
             pms: None,
             local,
             remote: Arc::new(Mutex::new(connection)),
+            use_system_domain,
             disable_worker,
         })
     }
@@ -515,7 +521,7 @@ impl Registry for ControllerRegistry {
     async fn insert_unit(&mut self, config: ServiceConfig, enabled: bool) -> Result<()> {
         self.local.insert_unit(config.clone(), enabled).await?;
 
-        if config.uid == UID::System {
+        if config.uid == self.worker_service_uid() {
             self.remote_connection(true)
                 .await?
                 .write_command(WorkerCommand::Create(config))
@@ -577,5 +583,21 @@ impl Registry for ControllerRegistry {
         connection.shutdown().await;
         connection.write_command(WorkerCommand::Shutdown).await?;
         Ok(())
+    }
+
+    fn local_service_uid(&self) -> UID {
+        if self.use_system_domain {
+            UID::System
+        } else {
+            UID::Shell
+        }
+    }
+
+    fn worker_service_uid(&self) -> UID {
+        if self.use_system_domain {
+            UID::Shell
+        } else {
+            UID::System
+        }
     }
 }

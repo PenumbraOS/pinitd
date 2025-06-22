@@ -38,11 +38,16 @@ pub struct Controller {
 }
 
 impl Controller {
-    pub async fn specialize(disable_worker: bool, is_zygote: bool) -> Result<()> {
+    pub async fn specialize(
+        use_system_domain: bool,
+        disable_worker: bool,
+        is_zygote: bool,
+    ) -> Result<()> {
         // Acquire lock
         // TODO: We have to have a wrapped process so Zygote can't kill us
         let options = FileOptions::new().read(true).write(true).create(true);
 
+        info!("Acquiring {CONTROLLER_LOCK_FILE}");
         let lock = match FileLock::lock(CONTROLLER_LOCK_FILE, false, options) {
             Ok(lock) => lock,
             Err(err) => {
@@ -50,6 +55,7 @@ impl Controller {
                 return Ok(());
             }
         };
+        info!("Acquired file lock");
 
         if is_zygote {
             init_zygote_with_fd().await;
@@ -69,7 +75,8 @@ impl Controller {
             worker_connected_rx,
         } = StartWorkerState::start(disable_worker).await?;
 
-        let mut registry = ControllerRegistry::new(connection, disable_worker).await?;
+        let mut registry =
+            ControllerRegistry::new(connection, use_system_domain, disable_worker).await?;
         let pms = ProcessManagementService::new(registry.clone()).await?;
         registry.set_pms(pms).await;
         let mut controller = Controller { registry };

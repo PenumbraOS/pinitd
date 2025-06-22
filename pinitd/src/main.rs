@@ -33,12 +33,12 @@ mod zygote;
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 enum Args {
-    /// Specializes this process as the controller, pid 2000 (shell), process
+    /// Specializes this process as the controller process, defaults to pid 2000 (shell)
     Controller(ControllerArgs),
-    /// Specializes this process as the worker, pid 1000 (system), process
-    Worker(NoAdditionalArgs),
+    /// Specializes this process as the worker process, defaults to pid 1000 (system)
+    Worker(WorkerArgs),
     /// Create custom exploit payload. NOTE: This is for internal use; rely on the pinitd for launching other processes
-    BuildPayload(NoAdditionalArgs),
+    BuildPayload(BuildPayloadArgs),
     /// Write the correct Zygote pid fd back on spawn and perform process monitoring of the child process. NOTE: This is for internal use; rely on the pinitd for launching other processes
     #[command(name = "monitored-wrapper")]
     ZygoteSpawnWrapper(ZygoteWrapperArgs),
@@ -54,6 +54,30 @@ struct ControllerArgs {
 
     #[arg(long)]
     is_zygote: bool,
+
+    /// Run the controller in the pid 1000 (system) domain. If false, defaults to the pid 2000 (shell) domain
+    #[arg(long)]
+    use_system_domain: bool,
+
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    _remaining_args: Vec<String>,
+}
+
+#[derive(Parser, Debug)]
+struct WorkerArgs {
+    /// Run the worker in the pid 2000 (shell) domain. If false, defaults to the pid 1000 (system) domain. Should be set if the controller is set to `use_system_domain`
+    #[arg(long)]
+    use_shell_domain: bool,
+
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    _remaining_args: Vec<String>,
+}
+
+#[derive(Parser, Debug)]
+struct BuildPayloadArgs {
+    /// Run the controller in the pid 1000 (system) domain. If false, defaults to the pid 2000 (shell) domain
+    #[arg(long)]
+    use_system_domain: bool,
 
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     _remaining_args: Vec<String>,
@@ -86,12 +110,6 @@ struct InternalWrapperArgs {
     _remaining_args: Vec<String>,
 }
 
-#[derive(Parser, Debug)]
-struct NoAdditionalArgs {
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-    _remaining_args: Vec<String>,
-}
-
 #[tokio::main]
 async fn main() {
     // Purposefully don't initialize logging until we need it, so we can specialize it for the process in question
@@ -113,17 +131,20 @@ async fn run() -> Result<()> {
         Args::Controller(args) => {
             init_logging_with_tag("pinitd-controller".into());
             info!("Specializing controller");
-            Ok(Controller::specialize(args.disable_worker, args.is_zygote).await?)
+            Ok(
+                Controller::specialize(args.use_system_domain, args.disable_worker, args.is_zygote)
+                    .await?,
+            )
         }
-        Args::Worker(_) => {
+        Args::Worker(args) => {
             init_logging_with_tag("pinitd-worker".into());
             info!("Specializing worker");
-            Ok(WorkerProcess::specialize().await?)
+            Ok(WorkerProcess::specialize(args.use_shell_domain).await?)
         }
-        Args::BuildPayload(_) => {
+        Args::BuildPayload(args) => {
             init_logging_with_tag("pinitd-build".into());
             info!("Building init payload only");
-            let payload = init_payload()?;
+            let payload = init_payload(args.use_system_domain)?;
             // Write to stdout
             print!("{payload}");
             Ok(())
@@ -155,26 +176,39 @@ fn init_logging_with_tag(tag: String) {
     // let _ = SimpleLogger::new().init();
 }
 
-fn init_payload() -> Result<String> {
+fn init_payload(use_system_domain: bool) -> Result<String> {
     let executable = env::current_exe()?;
     let executable = executable.display();
 
-    Ok(launch_payload(
-        DEFAULT_TRAILING_NEWLINE_COUNT,
-        2000,
-        None,
-        "/data/local/tmp/",
-        "com.android.shell",
-        "platform:shell:targetSdkVersion=29:complete",
-        // Wrap command in sh to ensure proper permissions
-        &ExploitKind::Command(format!(
-            // Specifically use single quotes to preserve arguments
-            // "'i=0;f=0;for a in \"\$@\";do i=\$((i+1));if [ \"\$a\" = com.android.internal.os.WrapperInit ];then eval f=\\\${\$((i+1))};break;fi;done; exec /system/bin/sh -c \"/data/local/tmp/pinitd controller & p=\\\$!; echo \\\$p >/proc/self/fd/\\\$1\" sh \"\$f\"'"
-            // "{executable} controller --is-zygote --disable-worker",
-            "{executable} internal-wrapper \"{executable} controller --disable-worker\"",
-            // "/data/local/tmp/zygote_pid_writer",
-            // "/system/bin/sh -c 'nohup {} controller $0 &'",
-        )),
-        Some("com.android.shell"),
-    )?)
+    if use_system_domain {
+        Ok(launch_payload(
+            DEFAULT_TRAILING_NEWLINE_COUNT,
+            1000,
+            // Enable network access (for children primarily)
+            Some(3003),
+            // Enable SDCard access
+            Some(9997),
+            "/data/",
+            "com.android.settings",
+            "platform:system_app:targetSdkVersion=29:complete",
+            &ExploitKind::Command(format!(
+                "{executable} internal-wrapper \"{executable} controller --disable-worker --use-system-domain\"",
+            )),
+            None,
+        )?)
+    } else {
+        Ok(launch_payload(
+            DEFAULT_TRAILING_NEWLINE_COUNT,
+            2000,
+            None,
+            None,
+            "/data/local/tmp/",
+            "com.android.shell",
+            "platform:shell:targetSdkVersion=29:complete",
+            &ExploitKind::Command(format!(
+                "{executable} internal-wrapper \"{executable} controller --disable-worker\"",
+            )),
+            Some("com.android.shell"),
+        )?)
+    }
 }

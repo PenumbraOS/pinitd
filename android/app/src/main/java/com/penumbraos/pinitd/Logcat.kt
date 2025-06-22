@@ -13,6 +13,7 @@ class Logcat {
 
     constructor(scope: CoroutineScope) {
         this.scope = scope
+        ProcessBuilder(listOf("logcat", "-c")).start().waitFor()
         ProcessBuilder(listOf("logcat", "-v", "brief", "*:S", "ActivityManager:V")).start().also { process ->
             this.process = process
         }
