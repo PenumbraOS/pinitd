@@ -38,8 +38,10 @@ impl SpawnCommand {
             && ((config.command.uid != UID::Shell && config.command.uid != UID::System)
                 || force_zygote_spawn)
         {
+            info!("Launching \"{name}\" via Zygote");
             spawn_zygote_exploit(config, command, pinit_id).await
         } else {
+            info!("Launching \"{name}\" via normal spawn");
             spawn_standard(command, pinit_id).await
         };
 
