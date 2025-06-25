@@ -192,7 +192,7 @@ fn init_payload(use_system_domain: bool) -> Result<String> {
             "com.android.settings",
             "platform:system_app:targetSdkVersion=29:complete",
             &ExploitKind::Command(format!(
-                "{executable} internal-wrapper \"{executable} controller --disable-worker --use-system-domain\"",
+                "exec {executable} internal-wrapper \"{executable} controller --disable-worker --use-system-domain\"",
             )),
             None,
         )?)
@@ -206,7 +206,7 @@ fn init_payload(use_system_domain: bool) -> Result<String> {
             "com.android.shell",
             "platform:shell:targetSdkVersion=29:complete",
             &ExploitKind::Command(format!(
-                "{executable} internal-wrapper \"{executable} controller --disable-worker\"",
+                "exec {executable} internal-wrapper \"{executable} controller --disable-worker\"",
             )),
             Some("com.android.shell"),
         )?)

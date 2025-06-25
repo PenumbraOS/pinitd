@@ -52,6 +52,7 @@ impl Wrapper {
             init_zygote_with_fd().await;
         }
 
+        let command = format!("exec {command}");
         info!("Spawning child \"{command}\"");
         let child = Command::new("sh")
             .args(&["-c", &command])
