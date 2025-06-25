@@ -129,7 +129,7 @@ async fn run() -> Result<()> {
 
     match Args::try_parse()? {
         Args::Controller(args) => {
-            init_logging_with_tag("pinitd-controller".into());
+            init_app("pinitd-controller".into());
             info!("Specializing controller");
             Ok(
                 Controller::specialize(args.use_system_domain, args.disable_worker, args.is_zygote)
@@ -137,12 +137,12 @@ async fn run() -> Result<()> {
             )
         }
         Args::Worker(args) => {
-            init_logging_with_tag("pinitd-worker".into());
+            init_app("pinitd-worker".into());
             info!("Specializing worker");
             Ok(WorkerProcess::specialize(args.use_shell_domain).await?)
         }
         Args::BuildPayload(args) => {
-            init_logging_with_tag("pinitd-build".into());
+            init_app("pinitd-build".into());
             info!("Building init payload only");
             let payload = init_payload(args.use_system_domain)?;
             // Write to stdout
@@ -158,6 +158,14 @@ async fn run() -> Result<()> {
             Wrapper::specialize_without_monitoring(args.command, args.is_zygote, true).await?;
             Ok(())
         }
+    }
+}
+
+fn init_app(tag: String) {
+    init_logging_with_tag(tag);
+    match nix::unistd::setsid() {
+        Ok(_) => info!("Successfully switched to self-owned process group"),
+        Err(err) => error!("Failed to create new self-owned process group {err}"),
     }
 }
 
