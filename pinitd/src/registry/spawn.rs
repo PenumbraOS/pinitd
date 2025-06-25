@@ -32,7 +32,13 @@ impl SpawnCommand {
 
         info!("Spawning process for \"{name}\": \"{}\"", config.command);
 
-        let (command, force_standard_spawn) = expanded_command(&config.command).await?;
+        let (command, force_standard_spawn) = match expanded_command(&config.command).await {
+            Ok(result) => result,
+            Err(err) => {
+                error!("Failed to build process spawn path: {err}");
+                return Err(err);
+            }
+        };
 
         let child = if !force_standard_spawn
             && ((config.command.uid != UID::Shell && config.command.uid != UID::System)
