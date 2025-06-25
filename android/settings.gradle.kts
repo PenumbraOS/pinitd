@@ -21,3 +21,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "pinitd"
 include(":app")
+include(":pinitddummy32")
