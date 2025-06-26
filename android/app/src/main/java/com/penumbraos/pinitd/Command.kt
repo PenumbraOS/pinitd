@@ -23,10 +23,8 @@ suspend fun launchPinitd(scope: CoroutineScope, context: Context) {
         val logcat = Logcat(scope)
         // Make sure logcat is as up to date as possible when we start waiting on it
         logcat.eatInBackground()
-        // This spawning process appears to write an extra byte to Zygote's control socket
-        // However, this only seems to cause Zygote to think we have the wrong pid. I am unsure
-        // if this has any negative ramifications
-        val process = Runtime.getRuntime().exec(arrayOf(binaryPath, "build-payload", "--use-system-domain"))
+        // val process = Runtime.getRuntime().exec(arrayOf(binaryPath, "build-payload", "--use-system-domain"))
+        val process = Runtime.getRuntime().exec(arrayOf(binaryPath, "build-payload"))
 
         val reader = BufferedReader(InputStreamReader(process.inputStream))
         var payload = reader.readText()

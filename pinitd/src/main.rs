@@ -55,6 +55,8 @@ struct ControllerArgs {
     #[arg(long)]
     is_zygote: bool,
 
+    // TODO: system doesn't seem to implicitly have permissions to write the hidden_api_blacklist_exemptions, so it fails
+    // when launching pinitd spawned services
     /// Run the controller in the pid 1000 (system) domain. If false, defaults to the pid 2000 (shell) domain
     #[arg(long)]
     use_system_domain: bool,
