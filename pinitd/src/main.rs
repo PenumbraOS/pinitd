@@ -6,7 +6,7 @@ use std::env;
 
 #[cfg(target_os = "android")]
 use ai_pin_logger::Config;
-use android_31317_exploit::{DEFAULT_TRAILING_NEWLINE_COUNT, ExploitKind, launch_payload};
+use android_31317_exploit::{Cve31317Exploit, ExploitKind};
 use base_log::LevelFilter;
 use clap::Parser;
 use controller::Controller;
@@ -190,9 +190,10 @@ fn init_payload(use_system_domain: bool) -> Result<String> {
     let executable = env::current_exe()?;
     let executable = executable.display();
 
+    let exploit = Cve31317Exploit::new();
+
     if use_system_domain {
-        Ok(launch_payload(
-            DEFAULT_TRAILING_NEWLINE_COUNT,
+        Ok(exploit.new_launch_payload(
             1000,
             // Enable network access (for children primarily)
             Some(3003),
@@ -205,10 +206,9 @@ fn init_payload(use_system_domain: bool) -> Result<String> {
                 "exec {executable} internal-wrapper --is-zygote \"{executable} controller --disable-worker --use-system-domain\"",
             )),
             None,
-        )?)
+        )?.payload)
     } else {
-        Ok(launch_payload(
-            DEFAULT_TRAILING_NEWLINE_COUNT,
+        Ok(exploit.new_launch_payload(
             2000,
             None,
             None,
@@ -219,6 +219,6 @@ fn init_payload(use_system_domain: bool) -> Result<String> {
                 "exec {executable} internal-wrapper --is-zygote \"{executable} controller --disable-worker\"",
             )),
             Some("com.android.shell"),
-        )?)
+        )?.payload)
     }
 }

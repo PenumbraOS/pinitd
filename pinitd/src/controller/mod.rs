@@ -1,6 +1,6 @@
 use std::{process, time::Duration};
 
-use android_31317_exploit::force_clear_exploit;
+use android_31317_exploit::Cve31317Exploit;
 use file_lock::{FileLock, FileOptions};
 use pinitd_common::{
     CONTROL_SOCKET_ADDRESS, CONTROLLER_LOCK_FILE, create_core_directories,
@@ -65,7 +65,8 @@ impl Controller {
         sleep(Duration::from_millis(50)).await;
 
         info!("Sending exploit force clear");
-        let _ = force_clear_exploit();
+        let exploit = Cve31317Exploit::new();
+        let _ = exploit.force_clear_exploit();
 
         create_core_directories();
 
