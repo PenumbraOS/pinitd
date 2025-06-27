@@ -1,6 +1,5 @@
 use std::{process, time::Duration};
 
-use android_31317_exploit::Cve31317Exploit;
 use file_lock::{FileLock, FileOptions};
 use pinitd_common::{
     CONTROL_SOCKET_ADDRESS, CONTROLLER_LOCK_FILE, create_core_directories,
@@ -23,6 +22,7 @@ use worker::{StartWorkerState, start_worker_update_watcher};
 
 use crate::{
     error::Result,
+    exploit::{exploit, init_exploit},
     registry::{Registry, controller::ControllerRegistry},
     worker::connection::WorkerConnectionStatus,
     zygote::init_zygote_with_fd,
@@ -64,9 +64,10 @@ impl Controller {
         info!("Delaying to allow Zygote to settle");
         sleep(Duration::from_millis(50)).await;
 
+        init_exploit(use_system_domain).await?;
+
         info!("Sending exploit force clear");
-        let exploit = Cve31317Exploit::new();
-        let _ = exploit.force_clear_exploit();
+        let _ = exploit()?.force_clear_exploit();
 
         create_core_directories();
 

@@ -1,15 +1,16 @@
-use std::{env, future, path::PathBuf, process::Stdio, time::Duration};
+use std::{env, future, path::PathBuf, process::Stdio};
 
-use crate::error::{Error, Result};
-use android_31317_exploit::{Cve31317Exploit, ExploitKind, TriggerApp};
+use crate::{
+    android::fetch_package_path,
+    error::{Error, Result},
+    exploit::exploit,
+};
+use android_31317_exploit::{ExploitKind, TriggerApp};
 use pinitd_common::{
     ServiceRunState, UID,
     unit_config::{ServiceCommand, ServiceCommandKind, ServiceConfig},
 };
-use tokio::{
-    process::{Child, Command},
-    time::timeout,
-};
+use tokio::process::{Child, Command};
 use uuid::Uuid;
 
 use super::local::LocalRegistry;
@@ -158,9 +159,7 @@ async fn spawn_zygote_exploit(
     let command = wrapper_command(&command, pinit_id, true)?;
     let trigger_app = zygote_trigger_activity(&config.command);
 
-    let exploit = Cve31317Exploit::new();
-
-    let payload = exploit.new_launch_payload(
+    let payload = exploit()?.new_launch_payload(
         config.command.uid.into(),
         None,
         Some(3003),
@@ -271,39 +270,4 @@ fn zygote_trigger_activity(command: &ServiceCommand) -> TriggerApp {
         ),
         |trigger| TriggerApp::new(trigger.package.clone(), trigger.package.clone()),
     )
-}
-
-async fn fetch_package_path(package: &str) -> Result<String> {
-    let child = Command::new("pm")
-        .args(&["path", package])
-        // TODO: Auto pipe output to Android log?
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()?;
-
-    let output = timeout(Duration::from_millis(500), child.wait_with_output()).await??;
-
-    if !output.status.success() {
-        return Err(Error::ProcessSpawnError(format!(
-            "Could not find package {package}"
-        )));
-    }
-
-    let stdout = String::from_utf8(output.stdout).ok();
-
-    if let Some(stdout) = stdout {
-        let package_path = stdout.trim_start_matches("package:").trim();
-        if !package_path.starts_with("/data/app") {
-            return Err(Error::ProcessSpawnError(format!(
-                "Found invalid package path for package {package}. Found {package_path}"
-            )));
-        }
-
-        return Ok(package_path.into());
-    }
-
-    Err(Error::ProcessSpawnError(format!(
-        "Could not find package {package}"
-    )))
 }

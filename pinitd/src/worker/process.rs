@@ -119,15 +119,14 @@ impl WorkerProcess {
     /// Spawn a remote process to act as the system worker
     #[cfg(target_os = "android")]
     async fn spawn() -> Result<()> {
-        use android_31317_exploit::{Cve31317Exploit, ExploitKind, TriggerApp};
+        use crate::exploit::exploit;
+        use android_31317_exploit::{ExploitKind, TriggerApp};
         use std::env;
 
         let executable = env::current_exe()?;
         let executable = executable.display();
 
-        let exploit = Cve31317Exploit::new();
-
-        let payload = exploit.new_launch_payload(
+        let payload = exploit()?.new_launch_payload(
             1000,
             None,
             None,

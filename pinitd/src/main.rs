@@ -17,8 +17,10 @@ use uuid::Uuid;
 use worker::process::WorkerProcess;
 use wrapper::Wrapper;
 
+mod android;
 mod controller;
 mod error;
+mod exploit;
 #[cfg(not(target_os = "android"))]
 mod log;
 mod registry;
