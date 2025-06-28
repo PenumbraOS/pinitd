@@ -12,6 +12,9 @@ pub enum Error {
     #[error("Bincode decode error {0}")]
     Decode(#[from] DecodeError),
 
+    #[error("Could not find package {0}")]
+    PackageLookup(String),
+
     #[error("Unknown error {0}")]
     Unknown(String),
 }

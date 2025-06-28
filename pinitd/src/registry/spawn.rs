@@ -1,13 +1,13 @@
 use std::{env, future, path::PathBuf, process::Stdio};
 
 use crate::{
-    android::fetch_package_path,
     error::{Error, Result},
     exploit::exploit,
 };
 use android_31317_exploit::{ExploitKind, TriggerApp};
 use pinitd_common::{
     ServiceRunState, UID,
+    android::fetch_package_path,
     unit_config::{ServiceCommand, ServiceCommandKind, ServiceConfig},
 };
 use tokio::process::{Child, Command};

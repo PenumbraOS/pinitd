@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub mod android;
 pub mod bincode;
 pub mod error;
 pub mod protocol;

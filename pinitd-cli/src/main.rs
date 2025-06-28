@@ -1,9 +1,13 @@
-use std::process;
+use std::{
+    path::PathBuf,
+    process::{self, Command, Stdio},
+};
 
 use crate::error::Result;
 use clap::Parser;
 use pinitd_common::{
-    CONTROL_SOCKET_ADDRESS, ServiceStatus,
+    CONTROL_SOCKET_ADDRESS, PACKAGE_NAME, ServiceStatus,
+    android::fetch_package_path,
     protocol::{
         CLICommand, CLIResponse,
         writable::{ProtocolRead, ProtocolWrite},
@@ -44,6 +48,9 @@ enum Commands {
     List,
     /// Request the daemon to shut down gracefully
     Shutdown,
+
+    /// Start pinitd directly in shell domain, without vulnerability
+    DebugManualStart,
 }
 
 #[tokio::main]
@@ -62,6 +69,9 @@ async fn main() -> Result<()> {
         Commands::Config { name } => CLICommand::Config(name),
         Commands::List => CLICommand::List,
         Commands::Shutdown => CLICommand::Shutdown,
+        Commands::DebugManualStart => {
+            return debug_manual_start().await;
+        }
     };
 
     let mut stream = match TcpStream::connect(CONTROL_SOCKET_ADDRESS).await {
@@ -110,6 +120,23 @@ async fn main() -> Result<()> {
             Ok(())
         }
     }
+}
+
+async fn debug_manual_start() -> Result<()> {
+    let path = fetch_package_path(PACKAGE_NAME).await?;
+
+    let mut path = PathBuf::from(path);
+    path.pop();
+    let path = path.join("lib/arm64/libpinitd.so");
+
+    let _ = Command::new(path)
+        .args(&["controller", "--disable-worker"])
+        // TODO: Auto pipe output to Android log?
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    Ok(())
 }
 
 fn print_status(statuses: &[ServiceStatus]) {
