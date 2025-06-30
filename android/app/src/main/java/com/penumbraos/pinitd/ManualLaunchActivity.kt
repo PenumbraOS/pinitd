@@ -9,6 +9,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
+const val SHARED_TAG = "pinitd-trampoline"
+
 // adb shell am start -n com.penumbraos.pinitd/.ManualLaunchActivity
 class ManualLaunchActivity : Activity() {
     val scope = CoroutineScope(Dispatchers.Main)
@@ -17,7 +19,7 @@ class ManualLaunchActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        Log.w("pinitd-trampoline", "ManualLaunchActivity created. Waiting...")
+        Log.w(SHARED_TAG, "ManualLaunchActivity created. Waiting...")
         handler.postDelayed(Runnable {
             scope.launch {
                 launchPinitd(scope, this@ManualLaunchActivity)

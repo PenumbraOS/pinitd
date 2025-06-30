@@ -8,6 +8,8 @@ import android.util.Log
 import android.provider.Settings.Global.NAME
 import android.provider.Settings.NameValueTable.VALUE
 
+private const val TAG = "pinitd-SettingWriter"
+
 @Suppress("DEPRECATION")
 class SettingWriter {
     companion object {

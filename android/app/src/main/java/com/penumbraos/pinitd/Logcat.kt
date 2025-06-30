@@ -25,11 +25,11 @@ class Logcat {
         try {
             withTimeout(timeout) {
                 val reader = process.inputStream.bufferedReader()
-                Log.w("pinitd-trampoline", "Started waiting for substring starting from: \"${reader.readLine()}\"")
+                Log.w(SHARED_TAG, "Started waiting for substring starting from: \"${reader.readLine()}\"")
                 while (true) {
                     val line = reader.readLine() ?: break
                     if (line.contains(substring)) {
-                        Log.w("pinitd-trampoline", "Matching string")
+                        Log.w(SHARED_TAG, "Matching string")
                         return@withTimeout
                     }
                 }
@@ -47,7 +47,7 @@ class Logcat {
             while (eatInBackground) {
                 reader.readLine() ?: break
             }
-            Log.w("pinitd-trampoline", "Logcat eating complete")
+            Log.w(SHARED_TAG, "Logcat eating complete")
         }
     }
 }
