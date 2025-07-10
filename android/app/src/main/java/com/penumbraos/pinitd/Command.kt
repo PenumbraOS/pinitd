@@ -12,7 +12,7 @@ import kotlin.time.Duration.Companion.milliseconds
 
 val EXEMPTIONS_SETTING_URI: Uri = Settings.Global.getUriFor("hidden_api_blacklist_exemptions")
 
-suspend fun launchPinitd(scope: CoroutineScope, context: Context) {
+suspend fun launchPinitd(scope: CoroutineScope, context: Context, protection: BootLoopProtection) {
     // Path will end with "base.apk". Remove that and navigate to native library
     val basePath = context.packageCodePath.slice(0..context.packageCodePath.length-9)
     val binaryPath = basePath + "lib/arm64/libpinitd.so"
@@ -22,6 +22,11 @@ suspend fun launchPinitd(scope: CoroutineScope, context: Context) {
         val logcat = Logcat(scope)
         // Make sure logcat is as up to date as possible when we start waiting on it
         logcat.eatInBackground()
+        
+        // Initialize property watcher
+        val propertyWatcher = PropertyWatcher()
+        propertyWatcher.clearStatus()
+        
 //        val process = Runtime.getRuntime().exec(arrayOf(binaryPath, "build-payload", "--use-system-domain"))
         val process = Runtime.getRuntime().exec(arrayOf(binaryPath, "build-payload"))
 
@@ -36,7 +41,6 @@ suspend fun launchPinitd(scope: CoroutineScope, context: Context) {
         Log.w(SHARED_TAG, "Setting payload: $payload")
         Settings.Global.putString(context.contentResolver, "hidden_api_blacklist_exemptions", payload)
 
-        // TODO: Add retries
         Log.w(SHARED_TAG, "Payload set")
         startApp("Settings", context, settingsIntent)
 
@@ -46,14 +50,23 @@ suspend fun launchPinitd(scope: CoroutineScope, context: Context) {
             Log.w(SHARED_TAG, "Didn't receive settings launch log. Sending exemptions clear anyway")
         }
 
-        // TODO: Add success/failure check
         context.contentResolver.delete(EXEMPTIONS_SETTING_URI, null, null)
 
-        Log.w(SHARED_TAG, "Trampoline complete")
+        Log.w(SHARED_TAG, "Trampoline complete, waiting for pinitd success signal")
+
+        // Wait for pinitd to signal success or failure
+        if (propertyWatcher.waitForSuccess(30 * 1000)) {
+            protection.recordSuccess()
+            Log.i(SHARED_TAG, "Boot launch successful")
+        } else {
+            // Failure already recorded
+            Log.w(SHARED_TAG, "Boot launch failed or timed out")
+        }
 
         // TODO: Kill process after delay (to keep `ps` clean)
         Thread.sleep(500)
     } catch (e: Exception) {
+        // Failure already recorded
         Log.e(SHARED_TAG, "Exploit error: ${e.message}")
     }
 }

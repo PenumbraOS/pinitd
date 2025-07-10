@@ -18,6 +18,10 @@
             android:name=".ManualLaunchActivity"
             android:exported="true"
             />
+        <activity
+            android:name=".BootProtectionActivity"
+            android:exported="true"
+            />
     </application>
 
 </manifest>

@@ -1,5 +1,6 @@
 package com.penumbraos.pinitd
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.os.Bundle
 import android.os.Handler
@@ -22,7 +23,7 @@ class ManualLaunchActivity : Activity() {
         Log.w(SHARED_TAG, "ManualLaunchActivity created. Waiting...")
         handler.postDelayed(Runnable {
             scope.launch {
-                launchPinitd(scope, this@ManualLaunchActivity)
+                launchPinitd(scope, this@ManualLaunchActivity, BootLoopProtection(this@ManualLaunchActivity))
             }
             finishAndRemoveTask()
         }, 1000)

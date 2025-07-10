@@ -12,6 +12,7 @@ use pms::ProcessManagementService;
 use tokio::{
     io::AsyncRead,
     net::TcpListener,
+    process::Command,
     signal::unix::{SignalKind, signal},
     sync::broadcast,
     task::JoinHandle,
@@ -102,6 +103,10 @@ impl Controller {
 
         info!("Autostarting services");
         controller.registry.autostart_all().await?;
+
+        // TODO: Actually determine failure during crash scenarios while pinitd is still running
+        sleep(Duration::from_secs(5)).await;
+        mark_boot_success().await;
 
         let _ = shutdown_signal.await;
         info!("Shutting down");
@@ -200,6 +205,16 @@ fn setup_signal_watchers(shutdown_token: CancellationToken) -> Result<JoinHandle
     });
 
     Ok(shutdown_signal_task)
+}
+
+async fn mark_boot_success() {
+    info!("Marking pinitd boot complete");
+    if let Ok(mut child) = Command::new("setprop")
+        .args(["pinitd.boot.status", "success"])
+        .spawn()
+    {
+        let _ = child.wait().await;
+    }
 }
 
 async fn shutdown(registry: ControllerRegistry) -> Result<()> {
