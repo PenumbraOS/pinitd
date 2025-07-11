@@ -6,7 +6,7 @@ use pinitd_common::{
     unit_config::{RestartPolicy, ServiceConfig},
 };
 use tokio::{
-    sync::{Mutex, MutexGuard},
+    sync::{Mutex, MutexGuard, oneshot},
     task::JoinHandle,
     time::sleep,
 };
@@ -153,22 +153,38 @@ impl LocalRegistry {
         Ok(())
     }
 
-    fn spawn(&self, name: String, pinit_id: Uuid, force_zygote_spawn: bool) -> JoinHandle<()> {
+    async fn spawn(
+        &self,
+        name: String,
+        pinit_id: Uuid,
+        force_zygote_spawn: bool,
+    ) -> JoinHandle<()> {
         let inner_name = name.clone();
         let inner_registry = self.clone();
-        tokio::spawn(async move {
+        let (spawn_complete_tx, spawn_complete_rx) = oneshot::channel::<()>();
+        let mut optional_spawn_complete_tx = Some(spawn_complete_tx);
+
+        let watcher_handle = tokio::spawn(async move {
             loop {
                 info!("Starting process \"{name}\"");
-                if let Ok(SpawnCommand {
-                    exit_code,
-                    exit_message,
-                }) = SpawnCommand::spawn(
+                let spawn_result = SpawnCommand::spawn(
                     inner_registry.clone(),
                     inner_name.clone(),
                     pinit_id,
                     force_zygote_spawn,
                 )
-                .await
+                .await;
+
+                // Mark process as "spawned"
+                if let Some(spawn_complete_tx) = optional_spawn_complete_tx {
+                    let _ = spawn_complete_tx.send(());
+                    optional_spawn_complete_tx = None;
+                }
+
+                if let Ok(SpawnCommand {
+                    exit_code,
+                    exit_message,
+                }) = spawn_result
                 {
                     let mut expected_stop = false;
 
@@ -200,7 +216,12 @@ impl LocalRegistry {
                     return;
                 }
             }
-        })
+        });
+
+        // Wait for initial spawn event
+        let _ = spawn_complete_rx.await;
+
+        watcher_handle
     }
 
     async fn stop_and_should_restart(
@@ -282,7 +303,7 @@ impl Registry for LocalRegistry {
         // If we're not a worker process, but we have this marked as a worker service, we can't spawn it without going through Zygote
         let force_zygote_spawn =
             !self.is_worker().await && self.is_worker_service(&name).await.map_or(false, |b| b);
-        let handle = self.spawn(name.clone(), id, force_zygote_spawn);
+        let handle = self.spawn(name.clone(), id, force_zygote_spawn).await;
 
         // Some time after start we should be able to acquire the lock to preserve this handle
         self.with_service_mut(&name, |service| {
