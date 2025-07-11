@@ -1,6 +1,7 @@
 use std::{
     path::PathBuf,
     process::{self, Command, Stdio},
+    time::Duration,
 };
 
 use crate::error::Result;
@@ -8,12 +9,13 @@ use clap::Parser;
 use pinitd_common::{
     CONTROL_SOCKET_ADDRESS, PACKAGE_NAME, ServiceStatus,
     android::fetch_package_path,
+    error::Error,
     protocol::{
         CLICommand, CLIResponse,
         writable::{ProtocolRead, ProtocolWrite},
     },
 };
-use tokio::{io::AsyncWriteExt, net::TcpStream};
+use tokio::{io::AsyncWriteExt, net::TcpStream, time::timeout};
 
 mod error;
 
@@ -79,11 +81,18 @@ async fn main() -> Result<()> {
         Err(_) => exit_with_message("Cannot find pinitd. Is it running?"),
     };
 
-    initd_command.write(&mut stream).await?;
-    // We don't need to write further
-    stream.shutdown().await?;
+    let response = match timeout(Duration::from_secs(1), async move {
+        initd_command.write(&mut stream).await?;
+        // We don't need to write further
+        stream.shutdown().await?;
 
-    let response = CLIResponse::read(&mut stream).await?;
+        CLIResponse::read(&mut stream).await
+    })
+    .await
+    {
+        Ok(result) => result?,
+        Err(_) => Err(Error::Unknown("Operation timed out".into()))?,
+    };
 
     match response {
         CLIResponse::Success(msg) => {
