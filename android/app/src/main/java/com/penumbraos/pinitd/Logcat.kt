@@ -25,7 +25,7 @@ class Logcat {
         try {
             withTimeout(timeout) {
                 val reader = process.inputStream.bufferedReader()
-                Log.w(SHARED_TAG, "Started waiting for substring starting from: \"${reader.readLine()}\"")
+                Log.w(SHARED_TAG, "Started waiting for substring: \"$substring\"")
                 while (true) {
                     val line = reader.readLine() ?: break
                     if (line.contains(substring)) {

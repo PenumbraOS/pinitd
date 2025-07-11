@@ -2,7 +2,7 @@ use std::{process, time::Duration};
 
 use file_lock::{FileLock, FileOptions};
 use pinitd_common::{
-    CONTROL_SOCKET_ADDRESS, CONTROLLER_LOCK_FILE, create_core_directories,
+    BOOT_SUCCESS_FILE, CONTROL_SOCKET_ADDRESS, CONTROLLER_LOCK_FILE, create_core_directories,
     protocol::{
         CLICommand, CLIResponse,
         writable::{ProtocolRead, ProtocolWrite},
@@ -10,9 +10,9 @@ use pinitd_common::{
 };
 use pms::ProcessManagementService;
 use tokio::{
+    fs::File,
     io::AsyncRead,
     net::TcpListener,
-    process::Command,
     signal::unix::{SignalKind, signal},
     sync::broadcast,
     task::JoinHandle,
@@ -209,11 +209,15 @@ fn setup_signal_watchers(shutdown_token: CancellationToken) -> Result<JoinHandle
 
 async fn mark_boot_success() {
     info!("Marking pinitd boot complete");
-    if let Ok(mut child) = Command::new("setprop")
-        .args(["pinitd.boot.status", "success"])
-        .spawn()
-    {
-        let _ = child.wait().await;
+
+    // Create success file for Android app to detect
+    match File::create(BOOT_SUCCESS_FILE).await {
+        Ok(_) => {
+            info!("Marked boot as success");
+        }
+        Err(err) => {
+            error!("Failed to create boot success file: {}", err);
+        }
     }
 }
 

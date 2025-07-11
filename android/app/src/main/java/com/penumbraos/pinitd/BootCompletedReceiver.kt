@@ -6,6 +6,7 @@ import android.content.Intent
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class BootCompletedReceiver : BroadcastReceiver() {
@@ -25,6 +26,18 @@ class BootCompletedReceiver : BroadcastReceiver() {
 
                 val scope = CoroutineScope(Dispatchers.IO)
                 scope.launch {
+                    val intent = context.packageManager.getLaunchIntentForPackage("com.penumbraos.mabl")
+                    if (intent != null) {
+                        Log.w(SHARED_TAG, "Starting MABL")
+                        context.startActivity(intent)
+                    } else {
+                        Log.e(SHARED_TAG, "MABL not found. Starting pinitd")
+                    }
+
+                    // Wait for MABL to start completely and start any dependencies
+                    // Once pinitd starts, Zygote will be broken
+                    delay(5 * 1000)
+
                     launchPinitd(scope, context, protection)
                 }
             } else {

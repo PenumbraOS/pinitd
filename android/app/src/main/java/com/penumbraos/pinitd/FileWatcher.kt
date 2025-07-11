@@ -7,13 +7,16 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import kotlin.coroutines.resume
 
-class PropertyWatcher {
+class FileWatcher {
     private val statusDir = File("/sdcard/penumbra/etc/pinitd/")
     private val successFile = File(statusDir, "boot_success")
     
     fun clearStatus() {
         try {
+            // Ensure directory exists
             statusDir.mkdirs()
+            
+            // Clear any existing status files
             successFile.delete()
             Log.i(SHARED_TAG, "Cleared boot status files")
         } catch (e: Exception) {
@@ -38,6 +41,14 @@ class PropertyWatcher {
                     }
                     
                     observer.startWatching()
+
+                    if (successFile.exists()) {
+                        // File is already here
+                        Log.i(SHARED_TAG, "Success file already exists")
+                        Log.i(SHARED_TAG, "Success file created")
+                        successFile.delete()
+                        continuation.resume(true)
+                    }
                     
                     continuation.invokeOnCancellation {
                         observer.stopWatching()

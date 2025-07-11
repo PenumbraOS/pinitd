@@ -23,9 +23,9 @@ suspend fun launchPinitd(scope: CoroutineScope, context: Context, protection: Bo
         // Make sure logcat is as up to date as possible when we start waiting on it
         logcat.eatInBackground()
         
-        // Initialize property watcher
-        val propertyWatcher = PropertyWatcher()
-        propertyWatcher.clearStatus()
+        // Initialize file watcher
+        val fileWatcher = FileWatcher()
+        fileWatcher.clearStatus()
         
 //        val process = Runtime.getRuntime().exec(arrayOf(binaryPath, "build-payload", "--use-system-domain"))
         val process = Runtime.getRuntime().exec(arrayOf(binaryPath, "build-payload"))
@@ -55,7 +55,7 @@ suspend fun launchPinitd(scope: CoroutineScope, context: Context, protection: Bo
         Log.w(SHARED_TAG, "Trampoline complete, waiting for pinitd success signal")
 
         // Wait for pinitd to signal success or failure
-        if (propertyWatcher.waitForSuccess(30 * 1000)) {
+        if (fileWatcher.waitForSuccess(30 * 1000)) {
             protection.recordSuccess()
             Log.i(SHARED_TAG, "Boot launch successful")
         } else {
