@@ -9,3 +9,5 @@ cp target/aarch64-linux-android/release/pinitd android/app/src/main/jniLibs/arm6
 cd android && ./gradlew installDebug
 adb shell pm grant com.penumbraos.pinitd android.permission.WRITE_SECURE_SETTINGS
 adb shell pm grant com.penumbraos.pinitd android.permission.READ_LOGS
+adb shell pm disable --user 0 humane.experience.systemnavigation
+adb shell cmd package set-home-activity com.penumbraos.pinitd/.ManualLaunchActivity

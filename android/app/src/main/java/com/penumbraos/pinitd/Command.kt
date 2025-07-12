@@ -6,11 +6,54 @@ import android.net.Uri
 import android.provider.Settings
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import kotlin.time.Duration.Companion.milliseconds
 
 val EXEMPTIONS_SETTING_URI: Uri = Settings.Global.getUriFor("hidden_api_blacklist_exemptions")
+
+fun launchWithBootProtection(context: Context) {
+    Log.w(SHARED_TAG, "Boot completed. Checking boot protection")
+
+    // Attempt to make absolutely sure the exploit is cleared. This will ideally prevent
+    // boot looping since this runs so early
+    context.contentResolver.delete(EXEMPTIONS_SETTING_URI, null, null)
+
+    val protection = BootLoopProtection(context)
+
+    if (protection.shouldAttemptLaunch()) {
+        Log.w(SHARED_TAG, "Boot protection allows launch, proceeding")
+        protection.recordAttempt()
+
+        val scope = CoroutineScope(Dispatchers.IO)
+        scope.launch {
+            launchCoreApp(context)
+
+            launchPinitd(scope, context, protection)
+        }
+    } else {
+        Log.w(SHARED_TAG, "Boot protection blocked launch")
+        Log.i(SHARED_TAG, protection.getStatus())
+    }
+}
+
+suspend fun launchCoreApp(context: Context) {
+    val intent = context.packageManager.getLaunchIntentForPackage("com.penumbraos.mabl")
+    if (intent != null) {
+        Log.w(SHARED_TAG, "Starting MABL")
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
+    } else {
+        Log.e(SHARED_TAG, "MABL not found. Starting pinitd")
+    }
+
+    // Wait for MABL to start completely and start any dependencies
+    // Once pinitd starts, Zygote will be broken
+    delay(5 * 1000)
+}
 
 suspend fun launchPinitd(scope: CoroutineScope, context: Context, protection: BootLoopProtection) {
     // Path will end with "base.apk". Remove that and navigate to native library
