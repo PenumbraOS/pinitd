@@ -1,5 +1,6 @@
 package com.penumbraos.pinitd
 
+import android.annotation.SuppressLint
 import android.os.FileObserver
 import android.util.Log
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -8,6 +9,7 @@ import java.io.File
 import kotlin.coroutines.resume
 
 class FileWatcher {
+    @SuppressLint("SdCardPath")
     private val statusDir = File("/sdcard/penumbra/etc/pinitd/")
     private val successFile = File(statusDir, "boot_success")
     
