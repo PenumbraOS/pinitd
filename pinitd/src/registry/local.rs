@@ -32,6 +32,7 @@ struct InnerServiceRegistry {
 pub struct LocalRegistry {
     inner: Arc<Mutex<InnerServiceRegistry>>,
     use_system_domain: bool,
+    zygote_lock: Arc<Mutex<()>>,
 }
 
 impl LocalRegistry {
@@ -45,6 +46,7 @@ impl LocalRegistry {
         let registry = LocalRegistry {
             inner: Arc::new(Mutex::new(inner)),
             use_system_domain,
+            zygote_lock: Arc::new(Mutex::new(())),
         };
         Ok(registry)
     }
@@ -59,6 +61,7 @@ impl LocalRegistry {
         let registry = LocalRegistry {
             inner: Arc::new(Mutex::new(inner)),
             use_system_domain: !use_shell_domain,
+            zygote_lock: Arc::new(Mutex::new(())),
         };
         Ok(registry)
     }
@@ -165,6 +168,8 @@ impl LocalRegistry {
         let (spawn_complete_tx, spawn_complete_rx) = oneshot::channel::<()>();
         let mut optional_spawn_complete_tx = Some(spawn_complete_tx);
 
+        let zygote_lock = self.zygote_lock.clone();
+
         let watcher_handle = tokio::spawn(async move {
             loop {
                 info!("Starting process \"{name}\"");
@@ -173,14 +178,12 @@ impl LocalRegistry {
                     inner_name.clone(),
                     pinit_id,
                     force_zygote_spawn,
+                    zygote_lock.clone(),
+                    optional_spawn_complete_tx,
                 )
                 .await;
 
-                // Mark process as "spawned"
-                if let Some(spawn_complete_tx) = optional_spawn_complete_tx {
-                    let _ = spawn_complete_tx.send(());
-                    optional_spawn_complete_tx = None;
-                }
+                optional_spawn_complete_tx = None;
 
                 if let Ok(SpawnCommand {
                     exit_code,

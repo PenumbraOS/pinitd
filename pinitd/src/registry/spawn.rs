@@ -1,4 +1,4 @@
-use std::{env, future, path::PathBuf, process::Stdio};
+use std::{env, future, path::PathBuf, process::Stdio, sync::Arc};
 
 use crate::{
     error::{Error, Result},
@@ -10,7 +10,10 @@ use pinitd_common::{
     android::fetch_package_path,
     unit_config::{ServiceCommand, ServiceCommandKind, ServiceConfig},
 };
-use tokio::process::{Child, Command};
+use tokio::{
+    process::{Child, Command},
+    sync::{Mutex, oneshot},
+};
 use uuid::Uuid;
 
 use super::local::LocalRegistry;
@@ -26,6 +29,8 @@ impl SpawnCommand {
         name: String,
         pinit_id: Uuid,
         force_zygote_spawn: bool,
+        zygote_lock: Arc<Mutex<()>>,
+        spawn_completed_tx: Option<oneshot::Sender<()>>,
     ) -> Result<Self> {
         let config = registry
             .with_service(&name, |service| Ok(service.config().clone()))
@@ -45,12 +50,23 @@ impl SpawnCommand {
             && ((config.command.uid != UID::Shell && config.command.uid != UID::System)
                 || force_zygote_spawn)
         {
+            if zygote_lock.try_lock().is_err() {
+                info!("Waiting for Zygote to become available");
+            }
+            let zygote_guard = zygote_lock.lock().await;
             info!("Launching \"{name}\" via Zygote");
-            spawn_zygote_exploit(config, command, pinit_id).await
+            let result = spawn_zygote_exploit(config, command, pinit_id).await;
+            drop(zygote_guard);
+            info!("Zygote spawn complete");
+            result
         } else {
             info!("Launching \"{name}\" via normal spawn");
             spawn_standard(command, pinit_id).await
         };
+
+        if let Some(tx) = spawn_completed_tx {
+            let _ = tx.send(());
+        }
 
         match child {
             Ok(mut child) => {
