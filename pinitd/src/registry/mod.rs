@@ -16,7 +16,12 @@ pub trait Registry {
 
     /// Attempts to start the registered service. Returns true if the service was successfully started and
     /// false if the service was already running
-    async fn service_start_with_id(&mut self, name: String, id: Uuid) -> Result<bool>;
+    async fn service_start_with_id(
+        &mut self,
+        name: String,
+        id: Uuid,
+        wait_for_start: bool,
+    ) -> Result<bool>;
 
     async fn service_enable(&self, name: String) -> Result<()>;
     async fn service_disable(&self, name: String) -> Result<()>;

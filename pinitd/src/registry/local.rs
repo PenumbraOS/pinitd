@@ -148,7 +148,7 @@ impl LocalRegistry {
     pub async fn service_restart_with_id(&mut self, name: String, pinit_id: Uuid) -> Result<()> {
         info!("Restarting service \"{name}\"");
         self.service_stop(name.clone()).await?;
-        self.service_start_with_id(name, pinit_id).await?;
+        self.service_start_with_id(name, pinit_id, false).await?;
 
         Ok(())
     }
@@ -158,6 +158,7 @@ impl LocalRegistry {
         name: String,
         pinit_id: Uuid,
         force_zygote_spawn: bool,
+        wait_for_spawn: bool,
     ) -> JoinHandle<()> {
         let inner_name = name.clone();
         let inner_registry = self.clone();
@@ -219,7 +220,9 @@ impl LocalRegistry {
         });
 
         // Wait for initial spawn event
-        let _ = spawn_complete_rx.await;
+        if wait_for_spawn {
+            let _ = spawn_complete_rx.await;
+        }
 
         watcher_handle
     }
@@ -299,11 +302,18 @@ impl Registry for LocalRegistry {
         .await
     }
 
-    async fn service_start_with_id(&mut self, name: String, id: Uuid) -> Result<bool> {
+    async fn service_start_with_id(
+        &mut self,
+        name: String,
+        id: Uuid,
+        wait_for_start: bool,
+    ) -> Result<bool> {
         // If we're not a worker process, but we have this marked as a worker service, we can't spawn it without going through Zygote
         let force_zygote_spawn =
             !self.is_worker().await && self.is_worker_service(&name).await.map_or(false, |b| b);
-        let handle = self.spawn(name.clone(), id, force_zygote_spawn).await;
+        let handle = self
+            .spawn(name.clone(), id, force_zygote_spawn, wait_for_start)
+            .await;
 
         // Some time after start we should be able to acquire the lock to preserve this handle
         self.with_service_mut(&name, |service| {

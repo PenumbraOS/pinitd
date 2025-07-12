@@ -167,7 +167,7 @@ impl ControllerRegistry {
         shutdown_token: CancellationToken,
     ) -> CLIResponse {
         match command {
-            CLICommand::Start(name) => match self.service_start(name.clone()).await {
+            CLICommand::Start(name) => match self.service_start(name.clone(), false).await {
                 Ok(did_start) => {
                     if did_start {
                         CLIResponse::Success(format!("Service \"{name}\" started",))
@@ -303,7 +303,7 @@ impl ControllerRegistry {
         self.insert_unit(config, enabled).await
     }
 
-    pub async fn service_start(&mut self, name: String) -> Result<bool> {
+    pub async fn service_start(&mut self, name: String, wait_for_start: bool) -> Result<bool> {
         let allow_start = self
             .local
             .with_service(&name, |service| {
@@ -322,10 +322,10 @@ impl ControllerRegistry {
         }
 
         // Start dependencies first (Wants dependencies)
-        self.start_dependencies(&name).await?;
+        self.start_dependencies(&name, wait_for_start).await?;
 
         let id = self.register_id(name.clone()).await;
-        self.service_start_with_id(name, id).await
+        self.service_start_with_id(name, id, wait_for_start).await
     }
 
     pub async fn service_stop(&mut self, name: String) -> Result<()> {
@@ -360,7 +360,7 @@ impl ControllerRegistry {
             info!("Restarting service \"{name}\"");
             self.service_stop(name.clone()).await?;
             self.pms_stop(name.clone()).await;
-            self.service_start(name).await?;
+            self.service_start(name, false).await?;
         }
 
         Ok(())
@@ -378,7 +378,7 @@ impl ControllerRegistry {
             }
         }
 
-        self.start_services_with_dependencies(autostart_services)
+        self.start_services_with_dependencies(autostart_services, true)
             .await?;
 
         info!("Autostart sequence complete.");
@@ -404,7 +404,7 @@ impl ControllerRegistry {
         id
     }
 
-    async fn start_dependencies(&mut self, service_name: &str) -> Result<()> {
+    async fn start_dependencies(&mut self, service_name: &str, wait_for_start: bool) -> Result<()> {
         let dependencies = self
             .local
             .with_service(service_name, |service| {
@@ -434,7 +434,10 @@ impl ControllerRegistry {
                 .await?;
 
             if !is_running {
-                if let Err(err) = self.service_start_internal(dep_name.clone()).await {
+                if let Err(err) = self
+                    .service_start_internal(dep_name.clone(), wait_for_start)
+                    .await
+                {
                     warn!(
                         "Failed to start dependency \"{}\" for service \"{}\": {}",
                         dep_name, service_name, err
@@ -448,7 +451,7 @@ impl ControllerRegistry {
         Ok(())
     }
 
-    async fn service_start_internal(&mut self, name: String) -> Result<bool> {
+    async fn service_start_internal(&mut self, name: String, wait_for_start: bool) -> Result<bool> {
         let allow_start = self
             .local
             .with_service(&name, |service| {
@@ -467,10 +470,14 @@ impl ControllerRegistry {
         }
 
         let id = self.register_id(name.clone()).await;
-        self.service_start_with_id(name, id).await
+        self.service_start_with_id(name, id, wait_for_start).await
     }
 
-    async fn start_services_with_dependencies(&mut self, service_names: Vec<String>) -> Result<()> {
+    async fn start_services_with_dependencies(
+        &mut self,
+        service_names: Vec<String>,
+        wait_for_start: bool,
+    ) -> Result<()> {
         let mut service_configs = Vec::new();
         for name in &service_names {
             let config = self
@@ -488,7 +495,7 @@ impl ControllerRegistry {
                 Step::Resolved(service_config) => {
                     info!("Autostarting service: \"{}\"", service_config.name);
                     let _ = self
-                        .service_start_internal(service_config.name.clone())
+                        .service_start_internal(service_config.name.clone(), wait_for_start)
                         .await;
                 }
                 Step::Unresolved(dep_name) => {
@@ -546,7 +553,12 @@ impl Registry for ControllerRegistry {
         }
     }
 
-    async fn service_start_with_id(&mut self, name: String, id: Uuid) -> Result<bool> {
+    async fn service_start_with_id(
+        &mut self,
+        name: String,
+        id: Uuid,
+        wait_for_start: bool,
+    ) -> Result<bool> {
         if self.is_worker_service(&name).await? {
             let result = self
                 .remote_connection(true)
@@ -558,7 +570,9 @@ impl Registry for ControllerRegistry {
                 .await?;
             Ok(result == WorkerResponse::Success)
         } else {
-            self.local.service_start_with_id(name, id).await
+            self.local
+                .service_start_with_id(name, id, wait_for_start)
+                .await
         }
     }
 

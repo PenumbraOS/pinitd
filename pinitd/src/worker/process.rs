@@ -183,7 +183,7 @@ async fn handle_command(
             pinit_id,
         } => {
             registry
-                .service_start_with_id(service_name, pinit_id)
+                .service_start_with_id(service_name, pinit_id, false)
                 .await?;
         }
         WorkerCommand::Stop(name) => {

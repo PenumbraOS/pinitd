@@ -44,8 +44,7 @@ class FileWatcher {
 
                     if (successFile.exists()) {
                         // File is already here
-                        Log.i(SHARED_TAG, "Success file already exists")
-                        Log.i(SHARED_TAG, "Success file created")
+                        Log.i(SHARED_TAG, "Success file already exists by time file watcher is set up")
                         successFile.delete()
                         continuation.resume(true)
                     }
