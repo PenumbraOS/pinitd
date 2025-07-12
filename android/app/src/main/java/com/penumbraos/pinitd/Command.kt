@@ -30,6 +30,11 @@ fun launchWithBootProtection(context: Context) {
 
         val scope = CoroutineScope(Dispatchers.IO)
         scope.launch {
+            // Force start systemnavigation before anything else
+            // This is due to hand sensing (namely ToF) running when systemnavigation is stopped. This should be figured out
+            Log.w(SHARED_TAG, "Starting systemnavigation")
+            launchApp(context, "humane.experience.systemnavigation")
+            delay(10000)
             launchCoreApp(context)
 
             launchPinitd(scope, context, protection)
@@ -41,18 +46,25 @@ fun launchWithBootProtection(context: Context) {
 }
 
 suspend fun launchCoreApp(context: Context) {
-    val intent = context.packageManager.getLaunchIntentForPackage("com.penumbraos.mabl")
-    if (intent != null) {
-        Log.w(SHARED_TAG, "Starting MABL")
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(intent)
-    } else {
+    if (!launchApp(context, "com.penumbraos.mabl")) {
         Log.e(SHARED_TAG, "MABL not found. Starting pinitd")
     }
 
     // Wait for MABL to start completely and start any dependencies
     // Once pinitd starts, Zygote will be broken
     delay(5 * 1000)
+}
+
+fun launchApp(context: Context, packageName: String): Boolean {
+    val intent = context.packageManager.getLaunchIntentForPackage(packageName)
+    if (intent == null) {
+        return false
+    }
+
+    Log.w(SHARED_TAG, "Starting $packageName")
+    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    context.startActivity(intent)
+    return true
 }
 
 suspend fun launchPinitd(scope: CoroutineScope, context: Context, protection: BootLoopProtection) {

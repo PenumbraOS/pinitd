@@ -12,7 +12,7 @@ import kotlinx.coroutines.launch
 class BootCompletedReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
         if (context != null && intent?.action == Intent.ACTION_BOOT_COMPLETED) {
-            launchWithBootProtection(context)
+//            launchWithBootProtection(context)
         }
     }
 }
