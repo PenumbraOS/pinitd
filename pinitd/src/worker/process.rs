@@ -41,7 +41,7 @@ impl WorkerProcess {
                         info!("Received command {command:?}");
 
                         // Before processing command, open lock on write socket so we don't push any data in the middle of our command response
-                        let write_lock = connection.acquire_write_lock().await;
+                        let write_lock = connection.acquire_write_lock().await?;
 
                         let response = match handle_command(command, &mut registry, &token).await {
                             Ok(response) => response,

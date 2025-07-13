@@ -73,11 +73,11 @@ impl Service {
 pub struct SyncedService<'a> {
     service: &'a mut Service,
     did_change: bool,
-    connection: Option<ControllerConnection>,
+    connection: ControllerConnection,
 }
 
 impl<'a> SyncedService<'a> {
-    pub fn from(service: &'a mut Service, connection: Option<ControllerConnection>) -> Self {
+    pub fn from(service: &'a mut Service, connection: ControllerConnection) -> Self {
         SyncedService {
             service,
             did_change: false,
@@ -139,7 +139,7 @@ impl<'a> SyncedService<'a> {
 pub struct SendableService {
     service: Service,
     did_change: bool,
-    connection: Option<ControllerConnection>,
+    connection: ControllerConnection,
 }
 
 impl SendableService {
@@ -148,13 +148,16 @@ impl SendableService {
             return Ok(());
         }
 
-        if let Some(connection) = &self.connection {
-            connection
-                .write_response(WorkerResponse::ServiceUpdate(self.service.inner.clone()))
-                .await
-        } else {
-            info!("Cannot send update; no controller connection");
-            Ok(())
+        match &self.connection {
+            ControllerConnection::WithConnection(_) => {
+                self.connection
+                    .write_response(WorkerResponse::ServiceUpdate(self.service.inner.clone()))
+                    .await
+            }
+            ControllerConnection::Disabled => {
+                // Ignore
+                Ok(())
+            }
         }
     }
 }

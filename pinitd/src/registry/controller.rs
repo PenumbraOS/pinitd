@@ -272,6 +272,7 @@ impl ControllerRegistry {
     pub async fn update_service_state(&self, name: String, state: ServiceRunState) -> Result<()> {
         self.local
             .with_service_mut(&name, |service| {
+                info!("Updating service state {name} with {state:?}");
                 service.set_state(state);
                 Ok(())
             })

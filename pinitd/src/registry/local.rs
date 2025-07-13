@@ -25,7 +25,7 @@ use super::Registry;
 struct InnerServiceRegistry {
     stored_state: StoredState,
     registry: HashMap<String, Service>,
-    controller_connection: Option<ControllerConnection>,
+    controller_connection: ControllerConnection,
 }
 
 #[derive(Clone)]
@@ -40,7 +40,7 @@ impl LocalRegistry {
         let inner = InnerServiceRegistry {
             stored_state,
             registry: HashMap::new(),
-            controller_connection: None,
+            controller_connection: ControllerConnection::Disabled,
         };
 
         let registry = LocalRegistry {
@@ -55,7 +55,7 @@ impl LocalRegistry {
         let inner = InnerServiceRegistry {
             stored_state: StoredState::dummy(),
             registry: HashMap::new(),
-            controller_connection: Some(connection),
+            controller_connection: connection,
         };
 
         let registry = LocalRegistry {
@@ -67,7 +67,10 @@ impl LocalRegistry {
     }
 
     async fn is_worker(&self) -> bool {
-        self.inner.lock().await.controller_connection.is_some()
+        matches!(
+            self.inner.lock().await.controller_connection,
+            ControllerConnection::WithConnection(_)
+        )
     }
 
     async fn with_registry<F, R>(&self, func: F) -> Result<R>
@@ -412,7 +415,7 @@ impl Registry for LocalRegistry {
         self.with_registry_async(|mut registry| {
             for (name, service) in &mut registry.registry {
                 // We don't need to send anything at shutdown
-                let mut service = SyncedService::from(service, None);
+                let mut service = SyncedService::from(service, ControllerConnection::Disabled);
                 service_stop_internal(name, &mut service);
             }
 

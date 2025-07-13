@@ -51,12 +51,13 @@ pub struct WorkerConnection {
 
 /// Connection held by Worker to transfer data to/from Controller
 #[derive(Clone)]
-pub struct ControllerConnection {
-    connection: Connection,
+pub enum ControllerConnection {
+    WithConnection(Connection),
+    Disabled,
 }
 
 #[derive(Clone)]
-struct Connection {
+pub struct Connection {
     read: Arc<Mutex<OwnedReadHalf>>,
     write: Arc<Mutex<OwnedWriteHalf>>,
     health_tx: watch::Sender<bool>,
@@ -224,31 +225,43 @@ impl ControllerConnection {
         let stream = TcpStream::connect(WORKER_SOCKET_ADDRESS).await?;
         info!("Connected to controller");
 
-        Ok(ControllerConnection {
-            connection: Connection::from(stream, false),
-        })
+        Ok(ControllerConnection::WithConnection(Connection::from(
+            stream, false,
+        )))
     }
 
     pub async fn read_command(&self) -> Result<WorkerCommand> {
-        let mut read = self.connection.read.lock().await;
-        info!("Awaiting command");
-        match WorkerCommand::read(&mut *read).await {
-            Ok(command) => Ok(command),
-            Err(err) => {
-                // Any error immediately closes the connection
-                self.connection.mark_disconnected(err.to_string());
-                Err(crate::error::Error::CommonError(err))
+        match self {
+            ControllerConnection::WithConnection(connection) => {
+                let mut read = connection.read.lock().await;
+                info!("Awaiting command");
+                match WorkerCommand::read(&mut *read).await {
+                    Ok(command) => Ok(command),
+                    Err(err) => {
+                        // Any error immediately closes the connection
+                        connection.mark_disconnected(err.to_string());
+                        Err(crate::error::Error::CommonError(err))
+                    }
+                }
             }
+            ControllerConnection::Disabled => Err(crate::error::Error::Unknown(
+                "Cannot read controller from controller".into(),
+            )),
         }
     }
 
     pub async fn write_response(&self, response: WorkerResponse) -> Result<()> {
-        let write_lock = self.acquire_write_lock().await;
+        let write_lock = self.acquire_write_lock().await?;
         self.write_response_with_lock(write_lock, response).await
     }
 
-    pub async fn acquire_write_lock(&self) -> MutexGuard<'_, OwnedWriteHalf> {
-        self.connection.write.lock().await
+    pub async fn acquire_write_lock(&self) -> Result<MutexGuard<'_, OwnedWriteHalf>> {
+        match self {
+            ControllerConnection::WithConnection(connection) => Ok(connection.write.lock().await),
+            ControllerConnection::Disabled => Err(crate::error::Error::Unknown(
+                "Cannot acquire controller write lock from controller".into(),
+            )),
+        }
     }
 
     pub async fn write_response_with_lock(
@@ -260,7 +273,9 @@ impl ControllerConnection {
             Ok(_) => Ok(()),
             Err(err) => {
                 // Any error immediately closes the connection
-                self.connection.mark_disconnected(err.to_string());
+                if let ControllerConnection::WithConnection(connection) = self {
+                    connection.mark_disconnected(err.to_string());
+                }
                 Err(crate::error::Error::CommonError(err))
             }
         }
