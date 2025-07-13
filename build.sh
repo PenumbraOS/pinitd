@@ -9,4 +9,9 @@ adb shell pm grant com.penumbraos.pinitd android.permission.WRITE_SECURE_SETTING
 adb shell pm grant com.penumbraos.pinitd android.permission.READ_LOGS
 adb shell pm disable-user --user 0 humane.experience.systemnavigation
 adb shell cmd package set-home-activity com.penumbraos.pinitd/.LauncherActivity
+# I think one of these works
+adb shell settings put secure launcher_component com.penumbraos.pinitd/.LauncherActivity
+adb shell settings put system home_app com.penumbraos.pinitd
+adb shell settings put global default_launcher com.penumbraos.pinitd/.LauncherActivity
+
 adb shell pm enable --user 0 humane.experience.systemnavigation
