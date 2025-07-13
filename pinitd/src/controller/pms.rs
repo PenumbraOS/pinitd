@@ -184,7 +184,7 @@ impl ProcessManagementService {
                 self.registry
                     .update_service_state(
                         connection.service_name.clone(),
-                        ServiceRunState::Running { pid },
+                        ServiceRunState::Running { pid: Some(pid) },
                     )
                     .await?;
                 info!("Received pid {pid} for \"{}\"", connection.service_name);

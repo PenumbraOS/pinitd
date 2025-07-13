@@ -449,12 +449,16 @@ fn service_stop_internal(name: &str, service: &mut SyncedService) {
             // Transition to stopping to mark this as an intentional service stop
             service.set_state(ServiceRunState::Stopping);
 
-            info!("Attempting to stop service \"{name}\" (pid: {pid}). Sending SIGTERM");
-            let result = unsafe { kill(pid as i32, SIGTERM) };
-            if result != 0 {
-                warn!("Failed to send SIGTERM to pid {pid}: result {result}");
+            if let Some(pid) = pid {
+                info!("Attempting to stop service \"{name}\" (PID: {pid}). Sending SIGTERM");
+                let result = unsafe { kill(pid as i32, SIGTERM) };
+                if result != 0 {
+                    warn!("Failed to send SIGTERM to pid {pid}: result {result}");
+                } else {
+                    info!("SIGTERM succeeded on pid {pid}");
+                }
             } else {
-                info!("SIGTERM succeeded on pid {pid}");
+                info!("Attempting to stop service \"{name}\" with unknown PID");
             }
             // If we have a handle, attempt to kill via handle
             if let Some(handle) = service.monitor_task() {

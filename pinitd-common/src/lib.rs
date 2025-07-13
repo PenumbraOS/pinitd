@@ -41,7 +41,7 @@ pub const PACKAGE_NAME: &str = "com.penumbraos.pinitd";
 pub enum ServiceRunState {
     Stopped,
     Stopping,
-    Running { pid: u32 },
+    Running { pid: Option<u32> },
     Failed { reason: String },
 }
 
@@ -50,7 +50,11 @@ impl std::fmt::Display for ServiceRunState {
         match self {
             Self::Stopped => write!(f, "Stopped"),
             Self::Stopping => write!(f, "Stopping"),
-            Self::Running { pid } => write!(f, "Running (PID: {})", pid),
+            Self::Running { pid } => write!(
+                f,
+                "Running (PID: {})",
+                pid.map_or("Unknown".into(), |pid| format!("{pid}"))
+            ),
             Self::Failed { reason } => write!(f, "Failed: {}", reason),
         }
     }

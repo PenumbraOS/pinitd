@@ -73,7 +73,11 @@ impl SpawnCommand {
                 let pid = child.pid(&name)?;
                 registry
                     .with_service_mut(&name, |service| {
-                        service.set_state(ServiceRunState::Running { pid });
+                        if let ServiceRunState::Running { pid: _ } = service.state() {
+                            // Ignore; we may have already received the pid from PMS
+                        } else {
+                            service.set_state(ServiceRunState::Running { pid });
+                        }
                         Ok(())
                     })
                     .await?;
@@ -107,7 +111,7 @@ enum InnerSpawnChild {
 }
 
 impl InnerSpawnChild {
-    fn pid(&self, name: &str) -> Result<u32> {
+    fn pid(&self, name: &str) -> Result<Option<u32>> {
         match self {
             InnerSpawnChild::Standard(child) => child.id().map_or_else(
                 || {
@@ -115,10 +119,10 @@ impl InnerSpawnChild {
                         "Failed to get PID for spawned process \"{name}\"",
                     )))
                 },
-                |pid| Ok(pid),
+                |pid| Ok(Some(pid)),
             ),
-            // TODO: Provide pid reporting method for Zygote processes
-            InnerSpawnChild::ZygoteExploit => Ok(100000),
+            // Zygote processes respond with their PIDs through the PMS
+            InnerSpawnChild::ZygoteExploit => Ok(None),
         }
     }
 

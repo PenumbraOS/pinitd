@@ -143,7 +143,7 @@ pub struct SendableService {
 }
 
 impl SendableService {
-    pub async fn send_update_if_necessary(&self) -> Result<()> {
+    pub async fn send_update_if_necessary(self) -> Result<()> {
         if !self.did_change {
             return Ok(());
         }
@@ -151,7 +151,7 @@ impl SendableService {
         match &self.connection {
             ControllerConnection::WithConnection(_) => {
                 self.connection
-                    .write_response(WorkerResponse::ServiceUpdate(self.service.inner.clone()))
+                    .write_response(WorkerResponse::ServiceUpdate(self.service.inner))
                     .await
             }
             ControllerConnection::Disabled => {
