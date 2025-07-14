@@ -46,7 +46,7 @@ fun launchWithBootProtection(context: Context) {
 }
 
 suspend fun launchCoreApp(context: Context) {
-    if (!launchApp(context, "com.penumbraos.mabl")) {
+    if (!launchApp(context, "com.penumbraos.mabl.pin")) {
         Log.e(SHARED_TAG, "MABL not found. Starting pinitd")
     }
 
