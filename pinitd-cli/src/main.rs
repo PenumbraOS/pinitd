@@ -149,17 +149,19 @@ async fn debug_manual_start() -> Result<()> {
 }
 
 fn print_status(statuses: &[ServiceStatus]) {
-    println!("{:<20} {:<10} {:<25} {}", "NAME", "ENABLED", "STATE", "UID");
+    println!(
+        " {:<41} {:<10} {:<20} {}",
+        "NAME", "ENABLED", "STATE", "UID"
+    );
     println!("{}", "-".repeat(80));
     for info in statuses {
         let uid: usize = info.uid.clone().into();
 
         println!(
-            "{:<20} {:<10} {:<25} {uid} ({:?})",
+            " {:<41} {:<10} {:<20} {uid}",
             info.name,
             info.enabled.to_string(),
             info.state.to_string(),
-            info.uid
         );
     }
 }
