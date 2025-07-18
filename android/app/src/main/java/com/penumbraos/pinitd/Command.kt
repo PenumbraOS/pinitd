@@ -18,6 +18,9 @@ val EXEMPTIONS_SETTING_URI: Uri = Settings.Global.getUriFor("hidden_api_blacklis
 fun launchWithBootProtection(context: Context) {
     Log.w(SHARED_TAG, "Boot completed. Checking boot protection")
 
+    // TODO: Check if exemption is already set. If so, this boot may be broken, so we need to clear and reboot before starting
+    // Make sure to count this as a boot failure
+
     // Attempt to make absolutely sure the exploit is cleared. This will ideally prevent
     // boot looping since this runs so early
     context.contentResolver.delete(EXEMPTIONS_SETTING_URI, null, null)
@@ -32,8 +35,8 @@ fun launchWithBootProtection(context: Context) {
         scope.launch {
             // Force start systemnavigation before anything else
             // This is due to hand sensing (namely ToF) running when systemnavigation is stopped. This should be figured out
-            Log.w(SHARED_TAG, "Starting systemnavigation")
-            launchApp(context, "humane.experience.systemnavigation")
+            // Log.w(SHARED_TAG, "Starting systemnavigation")
+            // launchApp(context, "humane.experience.systemnavigation")
             delay(10000)
             launchCoreApp(context)
 

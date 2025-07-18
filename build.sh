@@ -16,5 +16,6 @@ adb shell settings put secure launcher_component com.penumbraos.pinitd/.Launcher
 adb shell settings put system home_app com.penumbraos.pinitd
 adb shell settings put global default_launcher com.penumbraos.pinitd/.LauncherActivity
 
-sleep 5
-adb shell pm enable --user 0 humane.experience.systemnavigation
+# sleep 5
+# adb shell pm enable --user 0 humane.experience.systemnavigation
+echo "Built on $(date '+%Y-%m-%d %H:%M:%S')"
