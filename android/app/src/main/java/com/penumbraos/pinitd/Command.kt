@@ -41,6 +41,9 @@ fun launchWithBootProtection(context: Context) {
             launchCoreApp(context)
 
             launchPinitd(scope, context, protection)
+            // After pinitd claims to have finished starting, make sure core app is foremost app
+            delay(15000)
+            launchCoreApp(context)
         }
     } else {
         Log.w(SHARED_TAG, "Boot protection blocked launch")
