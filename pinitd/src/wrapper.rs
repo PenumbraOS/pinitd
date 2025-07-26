@@ -1,5 +1,6 @@
 use std::{process::Stdio, time::Duration};
 
+use daemonize::Daemonize;
 use pinitd_common::{
     PMS_SOCKET_ADDRESS,
     protocol::{
@@ -82,6 +83,13 @@ impl Wrapper {
                 None
             }
         };
+
+        let daemonize = Daemonize::new();
+
+        match daemonize.start() {
+            Ok(_) => info!("Daemonized id {pinit_id}"),
+            Err(err) => error!("Failed to daemonize id {pinit_id}: {err}"),
+        }
 
         let mut wrapper = Wrapper { stream };
 
