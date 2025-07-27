@@ -32,6 +32,8 @@ pub enum WorkerCommand {
     Status,
     /// Shutdown worker
     Shutdown,
+    /// Reparent the target PID under the primary uid_1000 cgroup. This prevents killing the process in a Zygote crash (see #4)
+    CGroupReparentCommand { pid: usize },
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -51,6 +53,7 @@ pub enum WorkerResponse {
 pub enum WorkerEvent {
     WorkerRegistration {
         worker_uid: UID,
+        worker_pid: usize,
     },
     Heartbeat {
         worker_uid: UID,

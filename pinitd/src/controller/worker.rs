@@ -26,8 +26,16 @@ pub fn start_worker_event_watcher(
 
 async fn handle_worker_event(registry: &ControllerRegistry, event: WorkerEvent) -> Result<()> {
     match event {
-        WorkerEvent::WorkerRegistration { worker_uid } => {
-            info!("Worker {worker_uid:?} registered");
+        WorkerEvent::WorkerRegistration {
+            worker_uid,
+            worker_pid,
+        } => {
+            // Send CGroupReparentCommand to system worker for this worker process
+            if let Err(e) = registry.send_cgroup_reparent_command(worker_pid).await {
+                error!("Failed to reparent worker {worker_uid:?} PID {worker_pid}: {e}");
+            } else {
+                info!("Successfully requested reparent for worker {worker_uid:?} PID {worker_pid}");
+            }
         }
         WorkerEvent::Heartbeat { .. } => {
             // TODO: Do something?

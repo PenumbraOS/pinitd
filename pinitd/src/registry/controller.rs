@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::Path, sync::Arc};
 
 use dependency_graph::{DependencyGraph, Step};
 use pinitd_common::{
-    CONFIG_DIR, ServiceRunState, ServiceStatus,
+    CONFIG_DIR, ServiceRunState, ServiceStatus, UID,
     protocol::{CLICommand, CLIResponse},
     unit_config::ServiceConfig,
 };
@@ -297,6 +297,36 @@ impl ControllerRegistry {
         self.service_start(name, false).await?;
 
         Ok(())
+    }
+
+    pub async fn send_cgroup_reparent_command(&self, pid: usize) -> Result<()> {
+        info!("Sending CGroupReparentCommand for PID {pid} to system worker");
+
+        // We are always sending to system, so default se_info is sufficient
+        let connection = self
+            .worker_manager
+            .get_worker_spawning_if_necessary(UID::System, None)
+            .await?;
+
+        let response = connection
+            .write_command(WorkerCommand::CGroupReparentCommand { pid })
+            .await?;
+
+        match response {
+            WorkerResponse::Success => {
+                info!("CGroupReparentCommand executed successfully for PID {pid}");
+                Ok(())
+            }
+            WorkerResponse::Error(err) => {
+                error!("CGroupReparentCommand failed for PID {pid}: {err}");
+                Err(Error::WorkerProtocolError(err))
+            }
+            _ => {
+                let err = "Unexpected response to CGroupReparentCommand";
+                error!("{err}");
+                Err(Error::WorkerProtocolError(err.to_string()))
+            }
+        }
     }
 
     pub async fn autostart_all(&mut self) -> Result<()> {

@@ -84,6 +84,14 @@ impl Controller {
         start_worker_event_watcher(controller.registry.clone(), global_worker_event_rx);
 
         info!("Controller started");
+        
+        // Reparent controller process to system cgroup
+        let controller_pid = std::process::id() as usize;
+        info!("Reparenting controller process (PID {}) to system cgroup", controller_pid);
+        if let Err(e) = controller.registry.send_cgroup_reparent_command(controller_pid).await {
+            error!("Failed to reparent controller process: {}", e);
+        }
+        
         let controller_clone = controller.clone();
         tokio::spawn(async move {
             let _ = controller_clone
