@@ -1,102 +1,90 @@
-use std::{path::Path, sync::Arc};
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 use dependency_graph::{DependencyGraph, Step};
 use pinitd_common::{
-    CONFIG_DIR, ServiceRunState, ServiceStatus, UID,
+    CONFIG_DIR, ServiceRunState, ServiceStatus,
     protocol::{CLICommand, CLIResponse},
     unit_config::ServiceConfig,
 };
 use tokio::{
     fs,
-    sync::{
-        Mutex,
-        broadcast::{self, Receiver, Sender},
-    },
+    sync::{Mutex, mpsc},
 };
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{
-    controller::pms::ProcessManagementService,
+    controller::{pms::ProcessManagementService, worker_manager::WorkerManager},
     error::{Error, Result},
     state::StoredState,
-    types::{BaseService, Service},
+    types::Service,
     unit_parsing::ParsableServiceConfig,
-    worker::{
-        connection::{WorkerConnection, WorkerConnectionStatus},
-        protocol::{WorkerCommand, WorkerResponse},
-    },
+    worker::protocol::{WorkerCommand, WorkerEvent, WorkerResponse},
 };
 
-use super::{Registry, local::LocalRegistry};
-
-enum ControllerRegistryWorker {
-    Connected(WorkerConnection),
-    Disconnected {
-        status_tx: Sender<WorkerConnection>,
-        status_rx: Receiver<WorkerConnection>,
-    },
-}
-
-impl Clone for ControllerRegistryWorker {
-    fn clone(&self) -> Self {
-        match self {
-            Self::Connected(arg0) => Self::Connected(arg0.clone()),
-            Self::Disconnected {
-                status_tx,
-                status_rx,
-            } => Self::Disconnected {
-                status_tx: status_tx.clone(),
-                status_rx: status_rx.resubscribe(),
-            },
-        }
-    }
-}
-
-impl ControllerRegistryWorker {
-    fn new_disconnected() -> Self {
-        let (status_tx, status_rx) = broadcast::channel(10);
-        ControllerRegistryWorker::Disconnected {
-            status_tx,
-            status_rx,
-        }
-    }
-}
+use super::Registry;
 
 #[derive(Clone)]
 pub struct ControllerRegistry {
     pms: Option<Box<ProcessManagementService>>,
-    local: LocalRegistry,
-    remote: Arc<Mutex<ControllerRegistryWorker>>,
-    use_system_domain: bool,
-    disable_worker: bool,
+    services: Arc<Mutex<HashMap<String, Service>>>,
+    stored_state: Arc<Mutex<StoredState>>,
+    worker_manager: Arc<WorkerManager>,
 }
 
 impl ControllerRegistry {
-    pub async fn new(
-        connection: Option<WorkerConnection>,
-        use_system_domain: bool,
-        disable_worker: bool,
-    ) -> Result<Self> {
+    pub async fn new(worker_event_tx: mpsc::Sender<WorkerEvent>) -> Result<Self> {
         let state = StoredState::load().await?;
         info!("Loaded enabled state for: {:?}", state.enabled_services);
 
         info!("Loading service configurations from {}", CONFIG_DIR);
-        let local = LocalRegistry::new_controller(state, use_system_domain)?;
 
-        let connection = if let Some(connection) = connection {
-            ControllerRegistryWorker::Connected(connection)
-        } else {
-            ControllerRegistryWorker::new_disconnected()
-        };
+        let worker_manager = Arc::new(WorkerManager::new(worker_event_tx));
+
+        // Start the global worker listener
+        worker_manager.start_listener().await?;
 
         Ok(Self {
             pms: None,
-            local,
-            remote: Arc::new(Mutex::new(connection)),
-            use_system_domain,
-            disable_worker,
+            services: Arc::new(Mutex::new(HashMap::new())),
+            stored_state: Arc::new(Mutex::new(state)),
+            worker_manager,
         })
+    }
+
+    // Helper methods for service access
+    async fn with_service<F, R>(&self, name: &str, func: F) -> Result<R>
+    where
+        F: FnOnce(&Service) -> Result<R>,
+    {
+        let services = self.services.lock().await;
+        let service = services
+            .get(name)
+            .ok_or_else(|| Error::UnknownServiceError(name.to_string()))?;
+        func(service)
+    }
+
+    #[allow(dead_code)]
+    async fn with_service_mut<F, R>(&self, name: &str, func: F) -> Result<R>
+    where
+        F: FnOnce(&mut Service) -> Result<R>,
+    {
+        let mut services = self.services.lock().await;
+        let service = services
+            .get_mut(name)
+            .ok_or_else(|| Error::UnknownServiceError(name.to_string()))?;
+        func(service)
+    }
+
+    async fn is_enabled(&self, name: &str) -> Result<bool> {
+        let stored_state = self.stored_state.lock().await;
+        Ok(stored_state.enabled(&name.to_string()))
+    }
+
+    async fn insert_service(&self, service: Service) -> Result<()> {
+        let mut services = self.services.lock().await;
+        services.insert(service.config().name.clone(), service);
+        Ok(())
     }
 
     pub async fn load_from_disk(&mut self) -> Result<()> {
@@ -140,7 +128,6 @@ impl ControllerRegistry {
 
     pub async fn service_reload(&mut self, name: String) -> Result<Option<ServiceConfig>> {
         let existing_config = self
-            .local
             .with_service(&name, |service| Ok(service.config().clone()))
             .await?;
 
@@ -149,7 +136,7 @@ impl ControllerRegistry {
             .await?;
 
         if new_config != existing_config {
-            let enabled = self.local.is_enabled(&name).await?;
+            let enabled = self.is_enabled(&name).await?;
             self.insert_unit(new_config.clone(), enabled).await?;
             if enabled {
                 self.service_restart(name).await?;
@@ -214,7 +201,6 @@ impl ControllerRegistry {
             },
             CLICommand::Config(name) => {
                 match self
-                    .local
                     .with_service(&name, |service| Ok(service.config().clone()))
                     .await
                 {
@@ -240,73 +226,26 @@ impl ControllerRegistry {
         }
     }
 
-    pub async fn update_worker_connection(&self, status: WorkerConnectionStatus) {
-        let mut lock = self.remote.lock().await;
-
-        match status {
-            WorkerConnectionStatus::Connected(connection) => {
-                let status_tx = match *lock {
-                    ControllerRegistryWorker::Connected(_) => unreachable!(),
-                    ControllerRegistryWorker::Disconnected { ref status_tx, .. } => {
-                        status_tx.clone()
-                    }
-                };
-                *lock = ControllerRegistryWorker::Connected(connection.clone());
-                // Ensure lock is released
-                drop(lock);
-                let _ = status_tx.send(connection);
-            }
-            WorkerConnectionStatus::Disconnected => {
-                *lock = ControllerRegistryWorker::new_disconnected();
-            }
-        }
-    }
-
-    pub async fn update_worker_service(&self, service: BaseService) -> Result<()> {
-        // We don't want to write back to worker
-        self.local
-            .internal_insert_service(Service::from(service))
-            .await
-    }
-
     pub async fn update_service_state(&self, name: String, state: ServiceRunState) -> Result<()> {
-        self.local
-            .with_service_mut(&name, |service| {
-                info!("Updating service state {name} with {state:?}");
-                service.set_state(state);
-                Ok(())
-            })
-            .await
-    }
-
-    async fn remote_connection(&self, allow_disconnected: bool) -> Result<WorkerConnection> {
-        match self.remote.lock().await.clone() {
-            ControllerRegistryWorker::Connected(connection) => Ok(connection),
-            ControllerRegistryWorker::Disconnected { mut status_rx, .. } => {
-                if allow_disconnected {
-                    return Err(Error::WorkerProtocolError("Worker disconnected".into()));
-                }
-
-                match status_rx.recv().await {
-                    Ok(connection) => Ok(connection),
-                    Err(err) => Err(Error::WorkerConnectionRecvError(err)),
-                }
-            }
+        let mut services = self.services.lock().await;
+        if let Some(service) = services.get_mut(&name) {
+            info!("Updating service state {name} with {state:?}");
+            service.set_state(state);
         }
+        Ok(())
     }
 
     async fn load_unit_config(&self, path: &Path) -> Result<ServiceConfig> {
-        ServiceConfig::parse(path, self.local_service_uid()).await
+        ServiceConfig::parse(path).await
     }
 
     async fn insert_unit_with_current_state(&mut self, config: ServiceConfig) -> Result<()> {
-        let enabled = self.local.is_enabled(&config.name).await?;
+        let enabled = self.is_enabled(&config.name).await?;
         self.insert_unit(config, enabled).await
     }
 
     pub async fn service_start(&mut self, name: String, wait_for_start: bool) -> Result<bool> {
         let allow_start = self
-            .local
             .with_service(&name, |service| {
                 if !service.enabled() {
                     warn!("Attempted to start disabled service \"{name}\". Ignoring.",);
@@ -330,13 +269,19 @@ impl ControllerRegistry {
     }
 
     pub async fn service_stop(&mut self, name: String) -> Result<()> {
-        if self.is_worker_service(&name).await? {
-            self.remote_connection(true)
-                .await?
-                .write_command(WorkerCommand::Stop(name.clone()))
-                .await?;
-        } else {
-            self.local.service_stop(name.clone()).await?;
+        let worker_uid = self
+            .with_service(&name, |service| Ok(service.config().command.uid.clone()))
+            .await?;
+
+        match self.worker_manager.get_worker_for_uid(worker_uid).await {
+            Ok(connection) => {
+                connection
+                    .write_command(WorkerCommand::KillProcess {
+                        service_name: name.clone(),
+                    })
+                    .await?;
+            }
+            Err(err) => error!("Cannot connect to worker to stop service \"{name}\": {err}"),
         }
 
         self.pms_stop(name).await;
@@ -345,24 +290,11 @@ impl ControllerRegistry {
     }
 
     pub async fn service_restart(&mut self, name: String) -> Result<()> {
-        // TODO: Reimplement with pinit_id. Currently crashes
-        if self.is_worker_service(&name).await? {
-            let pinit_id = self.register_id(name.clone()).await;
-            self.remote_connection(true)
-                .await?
-                .write_command(WorkerCommand::Restart {
-                    service_name: name.clone(),
-                    pinit_id,
-                })
-                .await?;
-            self.pms_stop(name).await;
-        } else {
-            // Duplicate implementation as in local
-            info!("Restarting service \"{name}\"");
-            self.service_stop(name.clone()).await?;
-            self.pms_stop(name.clone()).await;
-            self.service_start(name, false).await?;
-        }
+        // Simplified restart: stop then start
+        info!("Restarting service \"{name}\"");
+        self.service_stop(name.clone()).await?;
+        self.pms_stop(name.clone()).await;
+        self.service_start(name, false).await?;
 
         Ok(())
     }
@@ -407,7 +339,6 @@ impl ControllerRegistry {
 
     async fn start_dependencies(&mut self, service_name: &str, wait_for_start: bool) -> Result<()> {
         let dependencies = self
-            .local
             .with_service(service_name, |service| {
                 Ok(service.config().dependencies.wants.clone())
             })
@@ -419,7 +350,7 @@ impl ControllerRegistry {
                 dep_name, service_name
             );
 
-            if let Err(_) = self.local.with_service(&dep_name, |_| Ok(())).await {
+            if let Err(_) = self.with_service(&dep_name, |_| Ok(())).await {
                 warn!(
                     "Dependency \"{}\" not found for service \"{}\". Skipping",
                     dep_name, service_name
@@ -428,7 +359,6 @@ impl ControllerRegistry {
             }
 
             let is_running = self
-                .local
                 .with_service(&dep_name, |service| {
                     Ok(matches!(service.state(), ServiceRunState::Running { .. }))
                 })
@@ -454,7 +384,6 @@ impl ControllerRegistry {
 
     async fn service_start_internal(&mut self, name: String, wait_for_start: bool) -> Result<bool> {
         let allow_start = self
-            .local
             .with_service(&name, |service| {
                 if !service.enabled() {
                     warn!("Attempted to start disabled service \"{name}\". Ignoring.",);
@@ -482,7 +411,6 @@ impl ControllerRegistry {
         let mut service_configs = Vec::new();
         for name in &service_names {
             let config = self
-                .local
                 .with_service(name, |service| Ok(service.config().clone()))
                 .await?;
             service_configs.push(config);
@@ -495,9 +423,15 @@ impl ControllerRegistry {
             match step {
                 Step::Resolved(service_config) => {
                     info!("Autostarting service: \"{}\"", service_config.name);
-                    let _ = self
+                    if let Err(err) = self
                         .service_start_internal(service_config.name.clone(), wait_for_start)
-                        .await;
+                        .await
+                    {
+                        error!(
+                            "Failed to autostart service \"{}\": {}",
+                            service_config.name, err
+                        );
+                    }
                 }
                 Step::Unresolved(dep_name) => {
                     warn!("Unresolved dependency: \"{}\"", dep_name);
@@ -507,112 +441,160 @@ impl ControllerRegistry {
 
         Ok(())
     }
-
-    async fn is_worker_service(&self, name: &str) -> Result<bool> {
-        if self.disable_worker {
-            return Ok(false);
-        }
-
-        self.local.is_worker_service(name).await
-    }
 }
 
 impl Registry for ControllerRegistry {
     async fn service_names(&self) -> Result<Vec<String>> {
-        self.local.service_names().await
+        let services = self.services.lock().await;
+        Ok(services.keys().cloned().collect())
     }
 
     async fn service_can_autostart(&self, name: String) -> Result<bool> {
-        self.local.service_can_autostart(name).await
+        self.with_service(&name, |service| {
+            Ok(service.enabled()
+                && service.config().autostart
+                && *service.state() == ServiceRunState::Stopped)
+        })
+        .await
     }
 
     async fn insert_unit(&mut self, config: ServiceConfig, enabled: bool) -> Result<()> {
-        self.local.insert_unit(config.clone(), enabled).await?;
-
-        if config.command.uid == self.worker_service_uid() {
-            self.remote_connection(true)
-                .await?
-                .write_command(WorkerCommand::Create(config))
-                .await?;
-        }
-
+        let service = Service::new(config, ServiceRunState::Stopped, enabled);
+        self.insert_service(service).await?;
         Ok(())
     }
 
     async fn remove_unit(&mut self, name: String) -> Result<bool> {
-        let removed_local = self.local.remove_unit(name.clone()).await?;
+        let _ = self.service_stop(name.clone()).await;
 
-        if removed_local && self.is_worker_service(&name).await? {
-            let response = self
-                .remote_connection(true)
-                .await?
-                .write_command(WorkerCommand::Destroy(name))
-                .await?;
-            Ok(response == WorkerResponse::Success)
-        } else {
-            Ok(removed_local)
-        }
+        let mut services = self.services.lock().await;
+        let removed = services.remove(&name).is_some();
+
+        Ok(removed)
     }
 
     async fn service_start_with_id(
         &mut self,
         name: String,
         id: Uuid,
-        wait_for_start: bool,
+        _wait_for_start: bool,
     ) -> Result<bool> {
-        if self.is_worker_service(&name).await? {
-            let result = self
-                .remote_connection(true)
-                .await?
-                .write_command(WorkerCommand::Start {
-                    service_name: name,
-                    pinit_id: id,
-                })
-                .await?;
-            Ok(result == WorkerResponse::Success)
-        } else {
-            self.local
-                .service_start_with_id(name, id, wait_for_start)
-                .await
-        }
+        let (worker_uid, command, se_info) = self
+            .with_service(&name, |service| {
+                let config = service.config();
+                let worker_uid = config.command.uid.clone();
+                Ok((worker_uid, config.command.clone(), config.se_info.clone()))
+            })
+            .await?;
+
+        let command = command.command_string().await?;
+        let connection = self
+            .worker_manager
+            .get_worker_spawning_if_necessary(worker_uid, se_info)
+            .await?;
+
+        let result = connection
+            .write_command(WorkerCommand::SpawnProcess {
+                command,
+                pinit_id: id,
+                service_name: name,
+            })
+            .await?;
+
+        Ok(result == WorkerResponse::Success)
     }
 
     async fn service_enable(&self, name: String) -> Result<()> {
-        self.local.service_enable(name).await
-    }
+        let should_save = {
+            let services = self.services.lock().await;
+            if let Some(service) = services.get(&name) {
+                if service.enabled() {
+                    warn!("Attempted to enable already enabled service \"{name}\"");
+                    false
+                } else {
+                    true
+                }
+            } else {
+                return Err(Error::UnknownServiceError(name));
+            }
+        };
 
-    async fn service_disable(&self, name: String) -> Result<()> {
-        self.local.service_disable(name).await
-    }
+        if should_save {
+            let mut services = self.services.lock().await;
+            if let Some(service) = services.get(&name) {
+                let new_service =
+                    Service::new(service.config().clone(), service.state().clone(), true);
+                services.insert(name.clone(), new_service);
+            }
+            drop(services);
 
-    async fn service_status(&self, name: String) -> Result<ServiceStatus> {
-        self.local.service_status(name).await
-    }
+            // Update stored state
+            let mut stored_state = self.stored_state.lock().await;
+            if !stored_state.enabled_services.iter().any(|s| *s == name) {
+                stored_state.enabled_services.push(name);
+            }
+            let state = stored_state.clone();
+            drop(stored_state);
+            state.save().await?;
+        }
 
-    async fn service_list_all(&self) -> Result<Vec<ServiceStatus>> {
-        self.local.service_list_all().await
-    }
-
-    async fn shutdown(&self) -> Result<()> {
-        let mut connection = self.remote_connection(true).await?;
-        connection.shutdown().await;
-        connection.write_command(WorkerCommand::Shutdown).await?;
         Ok(())
     }
 
-    fn local_service_uid(&self) -> UID {
-        if self.use_system_domain {
-            UID::System
-        } else {
-            UID::Shell
+    async fn service_disable(&self, name: String) -> Result<()> {
+        let should_save = {
+            let services = self.services.lock().await;
+            if let Some(service) = services.get(&name) {
+                if !service.enabled() {
+                    warn!("Attempted to disable already disabled service \"{name}\"");
+                    false
+                } else {
+                    true
+                }
+            } else {
+                return Err(Error::UnknownServiceError(name));
+            }
+        };
+
+        if should_save {
+            // Update the service to be disabled
+            let mut services = self.services.lock().await;
+            if let Some(service) = services.get(&name) {
+                let new_service =
+                    Service::new(service.config().clone(), service.state().clone(), false);
+                services.insert(name.clone(), new_service);
+            }
+            drop(services);
+
+            // Update stored state
+            let mut stored_state = self.stored_state.lock().await;
+            if let Some(i) = stored_state
+                .enabled_services
+                .iter()
+                .position(|s| *s == name)
+            {
+                stored_state.enabled_services.swap_remove(i);
+            }
+            let state = stored_state.clone();
+            drop(stored_state);
+            state.save().await?;
         }
+
+        Ok(())
     }
 
-    fn worker_service_uid(&self) -> UID {
-        if self.use_system_domain {
-            UID::Shell
-        } else {
-            UID::System
-        }
+    async fn service_status(&self, name: String) -> Result<ServiceStatus> {
+        self.with_service(&name, |service| Ok(service.status()))
+            .await
+    }
+
+    async fn service_list_all(&self) -> Result<Vec<ServiceStatus>> {
+        let services = self.services.lock().await;
+        Ok(services.values().map(|s| s.status()).collect())
+    }
+
+    async fn shutdown(&self) -> Result<()> {
+        // Shutdown all workers using the worker manager
+        self.worker_manager.shutdown_all().await
     }
 }

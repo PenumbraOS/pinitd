@@ -14,23 +14,24 @@ use tokio::{
     io::AsyncRead,
     net::TcpListener,
     signal::unix::{SignalKind, signal},
-    sync::broadcast,
+    sync::mpsc,
     task::JoinHandle,
     time::sleep,
 };
 use tokio_util::sync::CancellationToken;
-use worker::{StartWorkerState, start_worker_update_watcher};
+use worker::start_worker_event_watcher;
 
 use crate::{
     error::Result,
     exploit::{exploit, init_exploit},
     registry::{Registry, controller::ControllerRegistry},
-    worker::connection::WorkerConnectionStatus,
+    worker::protocol::WorkerEvent,
     zygote::init_zygote_with_fd,
 };
 
 pub mod pms;
 mod worker;
+pub mod worker_manager;
 mod zygote;
 
 #[derive(Clone)]
@@ -39,11 +40,7 @@ pub struct Controller {
 }
 
 impl Controller {
-    pub async fn specialize(
-        use_system_domain: bool,
-        disable_worker: bool,
-        is_zygote: bool,
-    ) -> Result<()> {
+    pub async fn specialize(use_system_domain: bool, is_zygote: bool) -> Result<()> {
         // Acquire lock
         // TODO: We have to have a wrapped process so Zygote can't kill us
         let options = FileOptions::new().read(true).write(true).create(true);
@@ -72,14 +69,9 @@ impl Controller {
 
         create_core_directories();
 
-        let StartWorkerState {
-            connection,
-            worker_service_update_rx,
-            worker_connected_rx,
-        } = StartWorkerState::start(disable_worker).await?;
+        let (worker_event_tx, global_worker_event_rx) = mpsc::channel::<WorkerEvent>(100);
 
-        let mut registry =
-            ControllerRegistry::new(connection, use_system_domain, disable_worker).await?;
+        let mut registry = ControllerRegistry::new(worker_event_tx).await?;
         let pms = ProcessManagementService::new(registry.clone()).await?;
         registry.set_pms(pms).await;
         let mut controller = Controller { registry };
@@ -89,7 +81,7 @@ impl Controller {
         let shutdown_token = CancellationToken::new();
         let shutdown_signal = setup_signal_watchers(shutdown_token.clone())?;
 
-        start_worker_update_watcher(controller.registry.clone(), worker_service_update_rx);
+        start_worker_event_watcher(controller.registry.clone(), global_worker_event_rx);
 
         info!("Controller started");
         let controller_clone = controller.clone();
@@ -98,8 +90,6 @@ impl Controller {
                 .start_cli_listener(shutdown_token.clone())
                 .await;
         });
-
-        controller.start_worker_connection_listener(worker_connected_rx);
 
         info!("Autostarting services");
         controller.registry.autostart_all().await?;
@@ -166,23 +156,6 @@ impl Controller {
             .await;
 
         Ok(response)
-    }
-
-    fn start_worker_connection_listener(
-        &self,
-        mut worker_connected_rx: broadcast::Receiver<WorkerConnectionStatus>,
-    ) {
-        let inner_controller = self.clone();
-        tokio::spawn(async move {
-            loop {
-                let update = WorkerConnectionStatus::await_update(&mut worker_connected_rx).await;
-                inner_controller
-                    .clone()
-                    .registry
-                    .update_worker_connection(update)
-                    .await;
-            }
-        });
     }
 }
 

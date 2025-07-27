@@ -77,7 +77,7 @@ pub fn create_core_directories() {
     }
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Eq, Hash, Debug, Clone)]
 pub enum UID {
     System,
     Shell,

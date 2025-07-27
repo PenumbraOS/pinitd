@@ -3,10 +3,7 @@ use std::{
     fs::File,
     io::Write,
     os::fd::{FromRawFd, RawFd},
-    time::Duration,
 };
-
-use tokio::time::sleep;
 
 use crate::error::{Error, Result};
 

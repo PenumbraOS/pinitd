@@ -11,11 +11,14 @@ use base_log::LevelFilter;
 use clap::Parser;
 use controller::Controller;
 use error::Result;
+use pinitd_common::UID;
 #[cfg(not(target_os = "android"))]
 use simple_logger::SimpleLogger;
 use uuid::Uuid;
 use worker::process::WorkerProcess;
 use wrapper::Wrapper;
+
+use crate::error::Error;
 
 mod controller;
 mod error;
@@ -51,9 +54,6 @@ enum Args {
 #[derive(Parser, Debug)]
 struct ControllerArgs {
     #[arg(long)]
-    disable_worker: bool,
-
-    #[arg(long)]
     is_zygote: bool,
 
     // TODO: system doesn't seem to implicitly have permissions to write the hidden_api_blacklist_exemptions, so it fails
@@ -71,6 +71,10 @@ struct WorkerArgs {
     /// Run the worker in the pid 2000 (shell) domain. If false, defaults to the pid 1000 (system) domain. Should be set if the controller is set to `use_system_domain`
     #[arg(long)]
     use_shell_domain: bool,
+
+    /// Specify the UID for this worker (1000=System, 2000=Shell, or custom number)
+    #[arg(long)]
+    uid: Option<String>,
 
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     _remaining_args: Vec<String>,
@@ -134,15 +138,30 @@ async fn run() -> Result<()> {
         Args::Controller(args) => {
             init_app("pinitd-controller".into());
             info!("Specializing controller");
-            Ok(
-                Controller::specialize(args.use_system_domain, args.disable_worker, args.is_zygote)
-                    .await?,
-            )
+            Ok(Controller::specialize(args.use_system_domain, args.is_zygote).await?)
         }
         Args::Worker(args) => {
             init_app("pinitd-worker".into());
             info!("Specializing worker");
-            Ok(WorkerProcess::specialize(args.use_shell_domain).await?)
+
+            // TODO: Remove
+            // Prefer --uid argument over --use-shell-domain for backward compatibility
+            let uid = if let Some(uid) = args.uid {
+                Some(uid)
+            } else if args.use_shell_domain {
+                Some("2000".to_string())
+            } else {
+                None
+            };
+
+            let uid = if let Some(uid) = uid {
+                UID::try_from(uid.as_str())
+                    .map_err(|e| Error::Unknown(format!("Invalid worker UID: {e}")))?
+            } else {
+                UID::System
+            };
+
+            Ok(WorkerProcess::specialize(uid).await?)
         }
         Args::BuildPayload(args) => {
             init_app("pinitd-build".into());

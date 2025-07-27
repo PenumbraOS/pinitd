@@ -1,121 +1,94 @@
-use std::time::Duration;
-
-use pinitd_common::WORKER_SOCKET_ADDRESS;
-use tokio::{
-    net::TcpListener,
-    sync::{broadcast, mpsc},
-    time::sleep,
-};
+use pinitd_common::ServiceRunState;
+use tokio::sync::mpsc;
 
 use crate::{
-    error::Result,
-    registry::controller::ControllerRegistry,
-    types::BaseService,
-    worker::{
-        connection::{WorkerConnection, WorkerConnectionStatus},
-        process::WorkerProcess,
-    },
+    error::Result, registry::controller::ControllerRegistry, worker::protocol::WorkerEvent,
 };
 
-pub(crate) struct StartWorkerState {
-    pub connection: Option<WorkerConnection>,
-    pub worker_service_update_rx: mpsc::Receiver<BaseService>,
-    pub worker_connected_rx: broadcast::Receiver<WorkerConnectionStatus>,
-}
-
-impl StartWorkerState {
-    pub async fn start(prevent_spawn: bool) -> Result<Self> {
-        let socket = TcpListener::bind(&WORKER_SOCKET_ADDRESS).await?;
-        info!("Listening for worker");
-
-        let (worker_connected_tx, mut worker_connected_rx) =
-            broadcast::channel::<WorkerConnectionStatus>(10);
-
-        if !prevent_spawn {
-            // TODO: Retry handling
-            info!("Spawning worker");
-            WorkerProcess::spawn_with_retries(5, worker_connected_rx.resubscribe())?;
-            info!("Spawning worker sent");
-        } else {
-            info!("Skipping worker spawn due to argument");
-        }
-
-        let (worker_service_update_tx, worker_service_update_rx) = mpsc::channel::<BaseService>(10);
-
-        tokio::spawn(async move {
-            let mut socket = socket;
-
-            loop {
-                info!("Attempting to connect to worker");
-                let mut connection =
-                    match WorkerConnection::open(&mut socket, worker_service_update_tx.clone())
-                        .await
-                    {
-                        Ok(connection) => connection,
-                        Err(err) => {
-                            error!("Error connecting to worker: {err}");
-                            sleep(Duration::from_secs(2)).await;
-                            continue;
-                        }
-                    };
-
-                info!("Worker connection established");
-                let _ =
-                    worker_connected_tx.send(WorkerConnectionStatus::Connected(connection.clone()));
-
-                // Make sure connection stays available
-                connection.subscribe_for_disconnect().await;
-                info!("Worker disconnected");
-                let _ = worker_connected_tx.send(WorkerConnectionStatus::Disconnected);
-                // Loop again and attempt to reconnect
-            }
-        });
-
-        if prevent_spawn {
-            return Ok(Self {
-                connection: None,
-                worker_connected_rx,
-                worker_service_update_rx,
-            });
-        }
-
-        info!("Waiting for worker to report back");
-        loop {
-            match WorkerConnectionStatus::await_update(&mut worker_connected_rx).await {
-                WorkerConnectionStatus::Connected(connection) => {
-                    info!("Worker spawn message received. Continuing...");
-                    return Ok(Self {
-                        connection: Some(connection),
-                        worker_connected_rx,
-                        worker_service_update_rx,
-                    });
-                }
-                WorkerConnectionStatus::Disconnected => {
-                    warn!(
-                        "Worker unexpectedly disconnected before first connection. Awaiting connection..."
-                    );
-                }
-            }
-        }
-    }
-}
-
-pub fn start_worker_update_watcher(
+pub fn start_worker_event_watcher(
     registry: ControllerRegistry,
-    mut worker_service_update_rx: mpsc::Receiver<BaseService>,
+    mut worker_event_rx: mpsc::Receiver<WorkerEvent>,
 ) {
     tokio::spawn(async move {
         loop {
-            let service = worker_service_update_rx
+            let event = worker_event_rx
                 .recv()
                 .await
                 .expect("Channel unexpectedly closed");
 
-            let name = service.config.name.clone();
-
-            if let Err(err) = registry.clone().update_worker_service(service).await {
-                error!("Could not update remote service \"{name}\": {err}")
+            // Handle different types of worker events
+            if let Err(e) = handle_worker_event(&registry, event).await {
+                error!("Failed to handle worker event: {}", e);
             }
         }
     });
+}
+
+async fn handle_worker_event(registry: &ControllerRegistry, event: WorkerEvent) -> Result<()> {
+    match event {
+        WorkerEvent::WorkerRegistration { worker_uid } => {
+            info!("Worker {worker_uid:?} registered");
+        }
+        WorkerEvent::Heartbeat { .. } => {
+            // TODO: Do something?
+            // info!(
+            //     "Worker {worker_uid:?} heartbeat: uptime={uptime_seconds}s, active={active_services}",
+            // );
+        }
+        WorkerEvent::ProcessSpawned {
+            service_name,
+            pinit_id,
+        } => {
+            info!("Process spawned: {service_name} (ID: {pinit_id})");
+
+            registry
+                .update_service_state(service_name, ServiceRunState::Running { pid: None })
+                .await?;
+        }
+        WorkerEvent::ProcessExited {
+            service_name,
+            exit_code,
+        } => {
+            info!("Process exited: {} (code: {})", service_name, exit_code);
+
+            registry
+                .update_service_state(service_name, ServiceRunState::Stopped)
+                .await?;
+        }
+        WorkerEvent::ProcessCrashed {
+            service_name,
+            signal,
+        } => {
+            error!("Process crashed: {service_name} (signal: {signal})");
+
+            registry
+                .update_service_state(
+                    service_name,
+                    ServiceRunState::Failed {
+                        reason: format!("Process crashed with signal {}", signal),
+                    },
+                )
+                .await?;
+        }
+        WorkerEvent::WorkerError {
+            service_name,
+            error,
+        } => {
+            error!("Worker error for {:?}: {}", service_name, error);
+
+            // If there's a specific service, mark it as failed
+            if let Some(service_name) = service_name {
+                registry
+                    .update_service_state(
+                        service_name,
+                        ServiceRunState::Failed {
+                            reason: format!("Worker error: {}", error),
+                        },
+                    )
+                    .await?;
+            }
+        }
+    }
+
+    Ok(())
 }

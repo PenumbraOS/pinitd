@@ -1,34 +1,78 @@
-use std::{collections::HashMap, process, sync::Arc, time::Duration};
-
-use tokio::{
-    select,
-    sync::{Mutex, broadcast},
-    time::{sleep, timeout},
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, SystemTime},
 };
+
+use pinitd_common::UID;
+use tokio::{process::Command, select, sync::Mutex, time::interval};
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 use crate::{
     error::Result,
-    registry::{Registry, local::LocalRegistry},
     worker::{
         connection::ControllerConnection,
-        protocol::{WorkerCommand, WorkerResponse},
+        protocol::{WorkerCommand, WorkerEvent, WorkerMessage, WorkerResponse},
     },
 };
 
-use super::connection::WorkerConnectionStatus;
+/// Comprehensive process tracking information
+#[allow(dead_code)]
+#[derive(Debug)]
+pub struct ProcessInfo {
+    /// Process ID
+    pub pid: u32,
+    /// Service name this process belongs to
+    pub service_name: String,
+    /// Unique identifier for this service instance
+    pub pinit_id: Uuid,
+    /// Command line that was used to start the process
+    pub command_line: String,
+    /// Time when the process was started
+    pub start_time: SystemTime,
+}
+
+impl ProcessInfo {
+    pub fn new(pid: u32, service_name: String, pinit_id: Uuid, command_line: String) -> Self {
+        Self {
+            pid,
+            service_name,
+            pinit_id,
+            command_line,
+            start_time: SystemTime::now(),
+        }
+    }
+}
 
 pub struct WorkerProcess;
 
 impl WorkerProcess {
-    pub async fn specialize(use_shell_domain: bool) -> Result<()> {
+    pub async fn specialize(uid: UID) -> Result<()> {
         info!("Connecting to controller");
 
         let mut connection = ControllerConnection::open().await?;
         info!("Controller connected");
 
-        let mut registry = LocalRegistry::new_worker(connection.clone(), use_shell_domain)?;
+        info!("Worker starting with UID {uid:?}");
+
+        // Send worker identification as first message
+        let identification = WorkerEvent::WorkerRegistration {
+            worker_uid: uid.clone(),
+        };
+        if let Err(e) = connection
+            .write_response(WorkerMessage::Event(identification))
+            .await
+        {
+            error!("Failed to send worker identification: {}", e);
+            return Err(e);
+        }
+        let start_time = SystemTime::now();
+        let running_processes = Arc::new(Mutex::new(HashMap::<String, ProcessInfo>::new()));
         let token = CancellationToken::new();
+
+        // Send heartbeat every 30 seconds
+        let mut heartbeat_interval = interval(Duration::from_secs(30));
 
         loop {
             select! {
@@ -36,14 +80,24 @@ impl WorkerProcess {
                     warn!("Worker shutting down");
                     break;
                 }
+                _ = heartbeat_interval.tick() => {
+                    let uptime = start_time.elapsed().unwrap_or(Duration::ZERO).as_secs();
+                    let active_services = running_processes.lock().await.len() as u32;
+                    let heartbeat = WorkerEvent::Heartbeat {
+                        worker_uid: uid.clone(),
+                        uptime_seconds: uptime,
+                        active_services,
+                    };
+
+                    if let Err(e) = connection.write_response(WorkerMessage::Event(heartbeat)).await {
+                        error!("Failed to send heartbeat: {}", e);
+                    }
+                }
                 result = connection.read_command() => match result {
                     Ok(command) => {
                         info!("Received command {command:?}");
 
-                        // Before processing command, open lock on write socket so we don't push any data in the middle of our command response
-                        let write_lock = connection.acquire_write_lock().await?;
-
-                        let response = match handle_command(command, &mut registry, &token).await {
+                        let response = match handle_command(command, &running_processes, &connection).await {
                             Ok(response) => response,
                             Err(err) => {
                                 let err = format!("Error processing command: {err}");
@@ -53,7 +107,9 @@ impl WorkerProcess {
                         };
 
                         info!("Sending command response");
-                        connection.write_response_with_lock(write_lock, response).await?;
+                        if let Err(e) = connection.write_response(WorkerMessage::Response(response)).await {
+                            error!("Failed to send response: {}", e);
+                        }
                     }
                     Err(err) => {
                         error!("Error processing command packet: {err}");
@@ -67,58 +123,18 @@ impl WorkerProcess {
         Ok(())
     }
 
-    pub fn spawn_with_retries(
-        retry_count: usize,
-        worker_connected_rx: broadcast::Receiver<WorkerConnectionStatus>,
-    ) -> Result<()> {
-        tokio::spawn(async move {
-            if let Err(error) = Self::spawn().await {
-                error!("Failed worker spawn {error}");
-            }
-
-            for i in 0..retry_count {
-                let mut inner_rx = worker_connected_rx.resubscribe();
-                let did_complete = Arc::new(Mutex::new(false));
-                let inner_did_complete = did_complete.clone();
-                let _ = timeout(Duration::from_millis(500), async move {
-                    if let WorkerConnectionStatus::Connected(_) =
-                        WorkerConnectionStatus::await_update(&mut inner_rx).await
-                    {
-                        // We've succeeded
-                        *inner_did_complete.lock().await = true;
-                    }
-                })
-                .await;
-
-                if *did_complete.lock().await {
-                    return;
-                }
-
-                let will_retry = i < retry_count - 1;
-                let retry_string = if will_retry {
-                    format!("Retrying ({}/{retry_count})", i + 1)
-                } else {
-                    "Killing".into()
-                };
-
-                error!("Failed to connect to worker. {retry_string}");
-
-                if !will_retry {
-                    process::exit(1);
-                }
-
-                sleep(Duration::from_secs(5)).await;
-
-                let _ = Self::spawn().await;
-            }
-        });
-
-        Ok(())
-    }
-
-    /// Spawn a remote process to act as the system worker
+    /// Spawn a remote process to act as a worker for a specific UID
     #[cfg(target_os = "android")]
-    async fn spawn() -> Result<()> {
+    pub async fn spawn(uid: UID, se_info: Option<String>) -> Result<()> {
+        // Controller runs in Shell. Shell worker spawns as child, others via Zygote
+        if uid == UID::Shell {
+            let process_path = std::env::args().next().unwrap();
+            let mut cmd = tokio::process::Command::new(process_path);
+            cmd.arg("worker").arg("--uid").arg("2000");
+            cmd.spawn()?;
+            return Ok(());
+        }
+
         use crate::exploit::exploit;
         use android_31317_exploit::{ExploitKind, TriggerApp};
         use std::env;
@@ -126,15 +142,29 @@ impl WorkerProcess {
         let executable = env::current_exe()?;
         let executable = executable.display();
 
+        // Convert UID to numeric value for exploit
+        let uid_arg = match &uid {
+            UID::System => "1000".to_string(),
+            UID::Shell => unreachable!("Shell handled above"),
+            UID::Custom(uid_num) => uid_num.to_string(),
+        };
+
+        let uid_num: usize = uid.into();
+
+        let worker_args = format!("{executable} worker --uid {}", uid_arg);
+
         let payload = exploit()?.new_launch_payload(
-            1000,
+            uid_num,
             None,
             None,
             "/data/",
             "com.android.settings",
-            "platform:system_app:targetSdkVersion=29:complete",
+            se_info.as_ref().map_or(
+                "platform:system_app:targetSdkVersion=29:complete",
+                |se_info| &se_info,
+            ),
             &ExploitKind::Command(format!(
-                "{executable} internal-wrapper --is-zygote \"{executable} worker\""
+                "{executable} internal-wrapper --is-zygote \"{worker_args}\""
             )),
             None,
         )?;
@@ -153,59 +183,170 @@ impl WorkerProcess {
         Ok(())
     }
 
-    /// Spawn a remote process to act as the system worker
+    /// Spawn a remote process to act as a worker for a specific UID
     #[cfg(not(target_os = "android"))]
-    async fn spawn() -> Result<()> {
+    pub async fn spawn(uid: UID, se_info: Option<String>) -> Result<()> {
         let process_path = std::env::args().next().unwrap();
-        tokio::process::Command::new(process_path)
-            .arg("worker")
-            .spawn()?;
+        let mut cmd = tokio::process::Command::new(process_path);
+        cmd.arg("worker");
+
+        // Add UID as argument
+        let uid_arg = match uid {
+            UID::System => "1000",
+            UID::Shell => "2000",
+            UID::Custom(uid_num) => {
+                cmd.arg("--uid").arg(uid_num.to_string());
+                cmd.spawn()?;
+                return Ok(());
+            }
+        };
+
+        cmd.arg("--uid").arg(uid_arg);
+        cmd.spawn()?;
         Ok(())
     }
 }
 
 async fn handle_command(
     command: WorkerCommand,
-    registry: &mut LocalRegistry,
-    token: &CancellationToken,
+    running_processes: &Arc<Mutex<HashMap<String, ProcessInfo>>>,
+    connection: &ControllerConnection,
 ) -> Result<WorkerResponse> {
     match command {
-        WorkerCommand::Create(service_config) => {
-            // Register config
-            registry.insert_unit(service_config, true).await?;
-        }
-        WorkerCommand::Destroy(name) => {
-            // Delete config
-            registry.remove_unit(name).await?;
-        }
-        WorkerCommand::Start {
-            service_name,
+        WorkerCommand::SpawnProcess {
+            command,
             pinit_id,
-        } => {
-            registry
-                .service_start_with_id(service_name, pinit_id, false)
-                .await?;
-        }
-        WorkerCommand::Stop(name) => {
-            registry.service_stop(name).await?;
-        }
-        WorkerCommand::Restart {
             service_name,
-            pinit_id,
         } => {
-            registry
-                .service_restart_with_id(service_name, pinit_id)
-                .await?;
+            info!(
+                "Spawning process for service '{}': {}",
+                service_name, command
+            );
+
+            let mut child = Command::new("sh").args(["-c", &command]).spawn()?;
+
+            let pid = match child.id() {
+                Some(pid) => pid,
+                None => {
+                    if let Ok(Some(exit)) = child.try_wait() {
+                        let _ = connection
+                            .write_response(WorkerMessage::Event(WorkerEvent::ProcessExited {
+                                service_name,
+                                exit_code: exit.code().unwrap_or(-1),
+                            }))
+                            .await;
+                    }
+
+                    return Ok(WorkerResponse::Success);
+                }
+            };
+
+            let process_info =
+                ProcessInfo::new(pid, service_name.clone(), pinit_id, command.clone());
+            running_processes
+                .lock()
+                .await
+                .insert(service_name.clone(), process_info);
+
+            // Notify controller that process spawned successfully
+            let spawn_event: WorkerEvent = WorkerEvent::ProcessSpawned {
+                service_name: service_name.clone(),
+                pinit_id,
+            };
+            let _ = connection
+                .write_response(WorkerMessage::Event(spawn_event))
+                .await;
+
+            // Start monitoring this process
+            let service_name_clone = service_name.clone();
+            let connection_clone = connection.clone();
+            let running_processes_clone = running_processes.clone();
+            tokio::spawn(async move {
+                match child.wait().await {
+                    Ok(exit_status) => {
+                        let exit_code = exit_status.code().unwrap_or(-1);
+                        info!(
+                            "Process for service '{}' exited with code {}",
+                            service_name_clone, exit_code
+                        );
+
+                        // Remove from tracking
+                        running_processes_clone
+                            .lock()
+                            .await
+                            .remove(&service_name_clone);
+
+                        let _ = connection_clone
+                            .write_response(WorkerMessage::Event(WorkerEvent::ProcessExited {
+                                service_name: service_name_clone,
+                                exit_code,
+                            }))
+                            .await;
+                    }
+                    Err(e) => {
+                        error!("Error waiting for process '{}': {}", service_name_clone, e);
+
+                        // Remove from tracking on error too
+                        running_processes_clone
+                            .lock()
+                            .await
+                            .remove(&service_name_clone);
+
+                        let _ = connection_clone
+                            .write_response(WorkerMessage::Event(WorkerEvent::WorkerError {
+                                service_name: Some(service_name_clone),
+                                error: format!("Process wait error: {}", e),
+                            }))
+                            .await;
+                    }
+                }
+            });
+        }
+        WorkerCommand::KillProcess { service_name } => {
+            info!("Killing process for service '{}'", service_name);
+
+            if let Some(process_info) = running_processes.lock().await.remove(&service_name) {
+                // Kill the process using the PID
+                use std::process::Command;
+                let _ = Command::new("kill")
+                    .args(["-TERM", &process_info.pid.to_string()])
+                    .output();
+            } else {
+                // Process might not be in our tracking (if spawned via different method)
+                warn!("Process '{}' not found in running processes", service_name);
+            }
         }
         WorkerCommand::Status => {
-            let status = registry.service_list_all().await?;
-            let status_iter = status.into_iter().map(|s| (s.name, s.state));
-            return Ok(WorkerResponse::Status(HashMap::from_iter(status_iter)));
+            // Return status of running processes
+            let mut status = HashMap::new();
+            let processes = running_processes.lock().await;
+
+            for (name, process_info) in processes.iter() {
+                status.insert(
+                    name.clone(),
+                    pinitd_common::ServiceRunState::Running {
+                        pid: Some(process_info.pid),
+                    },
+                );
+            }
+
+            return Ok(WorkerResponse::Status(status));
         }
         WorkerCommand::Shutdown => {
-            let _ = registry.shutdown().await;
-            // Trigger process shutdown
-            token.cancel();
+            info!("Worker shutdown requested");
+
+            // Kill all running processes
+            for (name, process_info) in running_processes.lock().await.drain() {
+                info!(
+                    "Killing process for service '{}' (PID: {})",
+                    name, process_info.pid
+                );
+                use std::process::Command;
+                let _ = Command::new("kill")
+                    .args(["-TERM", &process_info.pid.to_string()])
+                    .output();
+            }
+
             return Ok(WorkerResponse::ShuttingDown);
         }
     };

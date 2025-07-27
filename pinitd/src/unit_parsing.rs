@@ -13,11 +13,11 @@ use tokio::fs;
 use crate::error::{Error, Result};
 
 pub trait ParsableServiceConfig {
-    async fn parse(path: &Path, local_uid: UID) -> Result<ServiceConfig>;
+    async fn parse(path: &Path) -> Result<ServiceConfig>;
 }
 
 impl ParsableServiceConfig for ServiceConfig {
-    async fn parse(path: &Path, local_uid: UID) -> Result<Self> {
+    async fn parse(path: &Path) -> Result<Self> {
         let content = fs::read_to_string(path).await.or_else(|_| {
             Err(Error::Unknown(format!(
                 "Failed to read unit file {:?}",
@@ -197,7 +197,8 @@ impl ParsableServiceConfig for ServiceConfig {
                     // Always use controller UID
                     ServiceCommand {
                         kind: command_kind,
-                        uid: local_uid,
+                        // TODO: Replace with UID config for PackageActivity
+                        uid: UID::System,
                     }
                 }
                 ServiceCommandKind::JVMClass {

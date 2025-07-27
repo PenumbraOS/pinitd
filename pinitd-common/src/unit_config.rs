@@ -3,7 +3,7 @@ use std::{fmt::Display, path::PathBuf};
 use dependency_graph::Node;
 use serde::{Deserialize, Serialize};
 
-use crate::UID;
+use crate::{UID, android::fetch_package_path};
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub enum RestartPolicy {
@@ -61,6 +61,69 @@ pub enum ServiceCommandKind {
 pub struct ServiceCommand {
     pub kind: ServiceCommandKind,
     pub uid: UID,
+}
+
+impl ServiceCommand {
+    pub async fn command_string(&self) -> crate::error::Result<String> {
+        let command = match &self.kind {
+            ServiceCommandKind::Command { command, .. } => command.clone(),
+            ServiceCommandKind::LaunchPackageBinary {
+                package,
+                content_path,
+                args,
+                ..
+            } => {
+                let package_path = fetch_package_path(&package).await?;
+                let path = PathBuf::from(package_path);
+                let path = path.join(
+                    content_path
+                        .strip_prefix("/")
+                        .unwrap_or_else(|| &content_path),
+                );
+
+                let command = path.display().to_string();
+
+                let command = if let Some(args) = args {
+                    format!("{command} {args}").trim().to_string()
+                } else {
+                    command
+                };
+
+                command
+            }
+            ServiceCommandKind::PackageActivity { package, activity } => {
+                let command = format!("am start -n {package}/{activity}");
+                command
+            }
+            ServiceCommandKind::JVMClass {
+                package,
+                class,
+                command_args,
+                jvm_args,
+                ..
+            } => {
+                let package_path = fetch_package_path(&package).await?;
+
+                let args = if let Some(command_args) = command_args {
+                    command_args
+                } else {
+                    ""
+                };
+
+                let jvm_args = if let Some(jvm_args) = jvm_args {
+                    jvm_args
+                } else {
+                    ""
+                };
+
+                format!(
+                "/system/bin/app_process -cp {package_path} {jvm_args} /system/bin --application {class} {args}"
+            ).trim().to_string()
+            }
+        };
+
+        Ok(command)
+    }
 }
 
 impl Display for ServiceCommandKind {

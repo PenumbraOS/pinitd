@@ -1,48 +1,32 @@
-use std::{error::Error, sync::Arc, time::Duration};
+use std::{error::Error, sync::Arc};
 
 use pinitd_common::{
-    WORKER_SOCKET_ADDRESS,
+    UID, WORKER_SOCKET_ADDRESS,
     protocol::writable::{ProtocolRead, ProtocolWrite},
 };
 use tokio::{
     io,
     net::{
-        TcpListener, TcpStream,
+        TcpStream,
         tcp::{OwnedReadHalf, OwnedWriteHalf},
     },
     sync::{
-        Mutex, MutexGuard, broadcast, mpsc,
+        Mutex, MutexGuard, mpsc,
         watch::{self, Receiver},
     },
     task::JoinHandle,
-    time::{sleep, timeout},
+    time::{Duration, sleep, timeout},
 };
 
-use crate::{error::Result, types::BaseService};
+use crate::error::Result;
 
-use super::protocol::{WorkerCommand, WorkerResponse};
-
-#[derive(Clone)]
-pub enum WorkerConnectionStatus {
-    Connected(WorkerConnection),
-    Disconnected,
-}
-
-impl WorkerConnectionStatus {
-    pub async fn await_update(
-        worker_connected_rx: &mut broadcast::Receiver<WorkerConnectionStatus>,
-    ) -> WorkerConnectionStatus {
-        worker_connected_rx
-            .recv()
-            .await
-            .unwrap_or_else(|_| WorkerConnectionStatus::Disconnected)
-    }
-}
+use super::protocol::{WorkerCommand, WorkerEvent, WorkerMessage, WorkerResponse};
 
 /// Connection held by Controller to transfer data to/from Worker
 #[derive(Clone)]
 pub struct WorkerConnection {
     connection: Connection,
+    uid: UID,
     read: Arc<Mutex<mpsc::Receiver<WorkerResponse>>>,
     _read_loop: Arc<Mutex<JoinHandle<()>>>,
     // When set, ignore socket errors as we're shutting down
@@ -51,10 +35,7 @@ pub struct WorkerConnection {
 
 /// Connection held by Worker to transfer data to/from Controller
 #[derive(Clone)]
-pub enum ControllerConnection {
-    WithConnection(Connection),
-    Disabled,
-}
+pub struct ControllerConnection(Connection);
 
 #[derive(Clone)]
 pub struct Connection {
@@ -66,7 +47,7 @@ pub struct Connection {
 }
 
 impl Connection {
-    fn from(stream: TcpStream, is_controller: bool) -> Self {
+    pub fn from(stream: TcpStream, is_controller: bool) -> Self {
         let (read, write) = stream.into_split();
 
         let (health_tx, health_rx) = watch::channel(true);
@@ -98,51 +79,26 @@ impl Connection {
 }
 
 impl WorkerConnection {
-    pub async fn open(
-        socket: &mut TcpListener,
-        worker_service_update_tx: mpsc::Sender<BaseService>,
-    ) -> Result<Self> {
-        let (stream, _) = socket.accept().await?;
-        info!("Connected to worker");
-
-        let connection = Connection::from(stream, true);
-
-        let (read_tx, read_rx) = mpsc::channel::<WorkerResponse>(10);
-        let read_loop = WorkerConnection::start_read_loop(
-            connection.clone(),
-            read_tx,
-            worker_service_update_tx,
-        )
-        .await;
-
-        Ok(WorkerConnection {
-            connection,
-            read: Arc::new(Mutex::new(read_rx)),
-            _read_loop: Arc::new(Mutex::new(read_loop)),
-            in_shutdown: false,
-        })
-    }
-
     async fn start_read_loop(
         connection: Connection,
         read_tx: mpsc::Sender<WorkerResponse>,
-        worker_service_update_tx: mpsc::Sender<BaseService>,
+        worker_event_tx: mpsc::Sender<WorkerEvent>,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
             // Permanently hold read lock
             let mut read_lock = connection.read.lock().await;
 
             loop {
-                match WorkerResponse::read(&mut *read_lock).await {
-                    Ok(response) => {
-                        match response {
-                            WorkerResponse::ServiceUpdate(service) => {
-                                // We probably don't care about these errors
-                                let _ = worker_service_update_tx.send(service).await;
-                            }
-                            _ => {
-                                // We probably don't care about these errors
+                match WorkerMessage::read(&mut *read_lock).await {
+                    Ok(message) => {
+                        match message {
+                            WorkerMessage::Response(response) => {
+                                // Send command responses to the response channel
                                 let _ = read_tx.send(response).await;
+                            }
+                            WorkerMessage::Event(event) => {
+                                // Send events to the global event handler
+                                let _ = worker_event_tx.send(event).await;
                             }
                         }
                     }
@@ -205,18 +161,61 @@ impl WorkerConnection {
         }
     }
 
+    pub fn uid(&self) -> &UID {
+        &self.uid
+    }
+
+    pub async fn is_healthy(&self) -> bool {
+        self.connection.is_connected()
+    }
+
     #[allow(dead_code)]
     pub fn is_connected(&self) -> bool {
         self.connection.is_connected()
     }
 
-    pub async fn subscribe_for_disconnect(&mut self) {
-        self.connection.subscribe_for_disconnect().await;
-    }
-
     pub async fn shutdown(&mut self) {
         self.in_shutdown = true;
         self._read_loop.lock().await.abort();
+    }
+
+    pub async fn from_connection(
+        connection: Connection,
+        worker_event_tx: mpsc::Sender<WorkerEvent>,
+    ) -> Result<Self> {
+        let uid = {
+            let mut read_lock = connection.read.lock().await;
+            let message = WorkerMessage::read(&mut *read_lock).await?;
+
+            match message {
+                WorkerMessage::Event(WorkerEvent::WorkerRegistration { worker_uid }) => {
+                    info!("Worker identified as UID {:?}", worker_uid);
+                    worker_uid
+                }
+                _ => {
+                    return Err(crate::error::Error::Unknown(
+                        "First message from worker was not registration".into(),
+                    ));
+                }
+            }
+        };
+
+        let (read_tx, read_rx) = mpsc::channel::<WorkerResponse>(10);
+        let read_loop =
+            WorkerConnection::start_read_loop(connection.clone(), read_tx, worker_event_tx).await;
+
+        Ok(WorkerConnection {
+            connection,
+            uid,
+            read: Arc::new(Mutex::new(read_rx)),
+            _read_loop: Arc::new(Mutex::new(read_loop)),
+            in_shutdown: false,
+        })
+    }
+
+    pub async fn monitor_until_disconnect(&self) {
+        let mut connection = self.connection.clone();
+        connection.subscribe_for_disconnect().await;
     }
 }
 
@@ -225,57 +224,40 @@ impl ControllerConnection {
         let stream = TcpStream::connect(WORKER_SOCKET_ADDRESS).await?;
         info!("Connected to controller");
 
-        Ok(ControllerConnection::WithConnection(Connection::from(
-            stream, false,
-        )))
+        Ok(ControllerConnection(Connection::from(stream, false)))
     }
 
     pub async fn read_command(&self) -> Result<WorkerCommand> {
-        match self {
-            ControllerConnection::WithConnection(connection) => {
-                let mut read = connection.read.lock().await;
-                info!("Awaiting command");
-                match WorkerCommand::read(&mut *read).await {
-                    Ok(command) => Ok(command),
-                    Err(err) => {
-                        // Any error immediately closes the connection
-                        connection.mark_disconnected(err.to_string());
-                        Err(crate::error::Error::CommonError(err))
-                    }
-                }
+        let mut read = self.0.read.lock().await;
+        match WorkerCommand::read(&mut *read).await {
+            Ok(command) => Ok(command),
+            Err(err) => {
+                // Any error immediately closes the connection
+                self.0.mark_disconnected(err.to_string());
+                Err(crate::error::Error::CommonError(err))
             }
-            ControllerConnection::Disabled => Err(crate::error::Error::Unknown(
-                "Cannot read controller from controller".into(),
-            )),
         }
     }
 
-    pub async fn write_response(&self, response: WorkerResponse) -> Result<()> {
+    pub async fn write_response(&self, message: WorkerMessage) -> Result<()> {
         let write_lock = self.acquire_write_lock().await?;
-        self.write_response_with_lock(write_lock, response).await
+        self.write_message_with_lock(write_lock, message).await
     }
 
     pub async fn acquire_write_lock(&self) -> Result<MutexGuard<'_, OwnedWriteHalf>> {
-        match self {
-            ControllerConnection::WithConnection(connection) => Ok(connection.write.lock().await),
-            ControllerConnection::Disabled => Err(crate::error::Error::Unknown(
-                "Cannot acquire controller write lock from controller".into(),
-            )),
-        }
+        Ok(self.0.write.lock().await)
     }
 
-    pub async fn write_response_with_lock(
+    pub async fn write_message_with_lock(
         &self,
         mut write_lock: MutexGuard<'_, OwnedWriteHalf>,
-        response: WorkerResponse,
+        message: WorkerMessage,
     ) -> Result<()> {
-        match response.write(&mut *write_lock).await {
+        match message.write(&mut *write_lock).await {
             Ok(_) => Ok(()),
             Err(err) => {
                 // Any error immediately closes the connection
-                if let ControllerConnection::WithConnection(connection) = self {
-                    connection.mark_disconnected(err.to_string());
-                }
+                self.0.mark_disconnected(err.to_string());
                 Err(crate::error::Error::CommonError(err))
             }
         }
