@@ -57,8 +57,10 @@ impl WorkerProcess {
         info!("Worker starting with UID {uid:?}");
 
         // Send worker identification as first message
+        let worker_pid = std::process::id() as usize;
         let identification = WorkerEvent::WorkerRegistration {
             worker_uid: uid.clone(),
+            worker_pid,
         };
         if let Err(e) = connection
             .write_response(WorkerMessage::Event(identification))
@@ -97,7 +99,7 @@ impl WorkerProcess {
                     Ok(command) => {
                         info!("Received command {command:?}");
 
-                        let response = match handle_command(command, &running_processes, &connection).await {
+                        let response = match handle_command(command, &running_processes, &connection, &uid).await {
                             Ok(response) => response,
                             Err(err) => {
                                 let err = format!("Error processing command: {err}");
@@ -211,6 +213,7 @@ async fn handle_command(
     command: WorkerCommand,
     running_processes: &Arc<Mutex<HashMap<String, ProcessInfo>>>,
     connection: &ControllerConnection,
+    worker_uid: &UID,
 ) -> Result<WorkerResponse> {
     match command {
         WorkerCommand::SpawnProcess {
@@ -348,6 +351,39 @@ async fn handle_command(
             }
 
             return Ok(WorkerResponse::ShuttingDown);
+        }
+        WorkerCommand::CGroupReparentCommand { pid } => {
+            if *worker_uid != UID::System {
+                error!("Received CGroupReparentCommand on non-system worker {worker_uid:?}");
+            }
+
+            info!("Executing cgroup reparent for PID {pid:?}");
+
+            return match Command::new("sh")
+                .args([
+                    "-c",
+                    &format!("echo {pid} > /sys/fs/cgroup/uid_1000/cgroup.procs"),
+                ])
+                .output()
+                .await
+            {
+                Ok(output) => {
+                    if output.status.success() {
+                        info!("cgroup reparent executed successfully");
+                        Ok(WorkerResponse::Success)
+                    } else {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        let err = format!("cgroup reparent failed: {stderr}");
+                        error!("{err}");
+                        Ok(WorkerResponse::Error(err))
+                    }
+                }
+                Err(err) => {
+                    let err = format!("Failed to execute cgroup reparent command: {err}");
+                    error!("{err}");
+                    Ok(WorkerResponse::Error(err))
+                }
+            };
         }
     };
 

@@ -93,8 +93,11 @@ impl WorkerManager {
         .await??;
 
         let worker_uid = worker_connection.uid();
+        let worker_pid = worker_connection.pid();
 
-        info!("Worker for UID {worker_uid:?} successfully connected and identified",);
+        info!(
+            "Worker for UID {worker_uid:?}, PID {worker_pid} successfully connected and identified",
+        );
 
         // Register worker
         {

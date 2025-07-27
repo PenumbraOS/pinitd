@@ -27,6 +27,7 @@ use super::protocol::{WorkerCommand, WorkerEvent, WorkerMessage, WorkerResponse}
 pub struct WorkerConnection {
     connection: Connection,
     uid: UID,
+    pid: usize,
     read: Arc<Mutex<mpsc::Receiver<WorkerResponse>>>,
     _read_loop: Arc<Mutex<JoinHandle<()>>>,
     // When set, ignore socket errors as we're shutting down
@@ -165,6 +166,10 @@ impl WorkerConnection {
         &self.uid
     }
 
+    pub fn pid(&self) -> usize {
+        self.pid
+    }
+
     pub async fn is_healthy(&self) -> bool {
         self.connection.is_connected()
     }
@@ -183,14 +188,14 @@ impl WorkerConnection {
         connection: Connection,
         worker_event_tx: mpsc::Sender<WorkerEvent>,
     ) -> Result<Self> {
-        let uid = {
+        let (uid, pid) = {
             let mut read_lock = connection.read.lock().await;
             let message = WorkerMessage::read(&mut *read_lock).await?;
 
             match message {
-                WorkerMessage::Event(WorkerEvent::WorkerRegistration { worker_uid }) => {
-                    info!("Worker identified as UID {:?}", worker_uid);
-                    worker_uid
+                WorkerMessage::Event(WorkerEvent::WorkerRegistration { worker_uid, worker_pid }) => {
+                    info!("Worker identified as UID {:?} with PID {}", worker_uid, worker_pid);
+                    (worker_uid, worker_pid)
                 }
                 _ => {
                     return Err(crate::error::Error::Unknown(
@@ -200,6 +205,15 @@ impl WorkerConnection {
             }
         };
 
+        // Resend the registration event to the event handler
+        let registration_event = WorkerEvent::WorkerRegistration {
+            worker_uid: uid.clone(),
+            worker_pid: pid,
+        };
+        if let Err(e) = worker_event_tx.send(registration_event).await {
+            error!("Failed to resend worker registration event: {}", e);
+        }
+
         let (read_tx, read_rx) = mpsc::channel::<WorkerResponse>(10);
         let read_loop =
             WorkerConnection::start_read_loop(connection.clone(), read_tx, worker_event_tx).await;
@@ -207,6 +221,7 @@ impl WorkerConnection {
         Ok(WorkerConnection {
             connection,
             uid,
+            pid,
             read: Arc::new(Mutex::new(read_rx)),
             _read_loop: Arc::new(Mutex::new(read_loop)),
             in_shutdown: false,
