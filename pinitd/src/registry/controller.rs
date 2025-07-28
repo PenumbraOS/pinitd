@@ -1,8 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    path::Path,
-    sync::Arc,
-};
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 use dependency_graph::{DependencyGraph, Step};
 use pinitd_common::{
@@ -408,63 +404,54 @@ impl ControllerRegistry {
         }
 
         // Build service configs for dependency resolution
-        let mut all_service_configs = Vec::new();
+        // We can only autostart dependencies that are also autostart
+        let mut all_autostart_service_configs = Vec::new();
         for service_name in &autostart_services {
             let config = self
                 .with_service(service_name, |service| Ok(service.config().clone()))
                 .await?;
-            all_service_configs.push(config);
+            all_autostart_service_configs.push(config);
         }
 
         // Resolve dependency graph once and extract service names in dependency order
-        let dependency_graph = DependencyGraph::from(&all_service_configs[..]);
-        let mut all_services_to_start = Vec::new();
-        let mut dependency_ordered_services = Vec::new();
+        let dependency_graph = DependencyGraph::from(&all_autostart_service_configs[..]);
+        let mut service_configs_to_start = Vec::new();
 
         for step in dependency_graph {
             match step {
                 Step::Resolved(service_config) => {
-                    let service_name = service_config.name.clone();
-                    all_services_to_start.push(service_name.clone());
-                    dependency_ordered_services.push(service_name);
+                    service_configs_to_start.push(service_config.clone());
                 }
                 Step::Unresolved(dep_name) => {
-                    // Still try to pre-spawn worker for unresolved dependencies if they exist
-                    if let Ok(_) = self.with_service(&dep_name, |_| Ok(())).await {
-                        all_services_to_start.push(dep_name.to_string());
-                        dependency_ordered_services.push(dep_name.to_string());
-                    }
+                    warn!("Unresolved dependency: \"{}\"", dep_name);
                 }
             }
         }
 
         info!(
             "Pre-spawning workers for {} total services (including dependencies)",
-            all_services_to_start.len()
+            service_configs_to_start.len()
         );
 
-        // Pre-spawn workers for all services that will be started
-        let mut workers_to_spawn = HashSet::new();
-        for service_name in &all_services_to_start {
-            let worker_uid = self
-                .with_service(service_name, |service| {
-                    Ok(service.config().command.uid.clone())
-                })
-                .await?;
-            workers_to_spawn.insert(worker_uid);
-        }
-
-        for worker_uid in workers_to_spawn {
-            info!("Pre-spawning worker for UID {worker_uid:?}");
+        for config in &service_configs_to_start {
+            info!("Pre-spawning worker for UID {:?}", config.command.uid);
             let _ = self
                 .worker_manager
-                .get_worker_spawning_if_necessary(worker_uid, None)
+                .get_worker_spawning_if_necessary(
+                    config.command.uid.clone(),
+                    config.se_info.clone(),
+                )
                 .await?;
         }
 
         {
             let mut pending = self.pending_autostart_services.lock().await;
-            *pending = Some(dependency_ordered_services);
+            *pending = Some(
+                service_configs_to_start
+                    .iter()
+                    .map(|config| config.name.clone())
+                    .collect(),
+            );
         }
 
         info!("Sending Zygote crash");
