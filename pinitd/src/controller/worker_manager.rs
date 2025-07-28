@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use pinitd_common::{UID, WORKER_SOCKET_ADDRESS};
+use pinitd_common::{UID, WORKER_CONTROLLER_POLL_INTERVAL, WORKER_SOCKET_ADDRESS};
 use tokio::{
     net::TcpListener,
     sync::{Mutex, mpsc, oneshot},
@@ -24,6 +24,8 @@ pub struct WorkerManager {
     pending_connections: Arc<Mutex<HashMap<UID, Vec<oneshot::Sender<WorkerConnection>>>>>,
     /// Global event channel for all worker events
     event_tx: mpsc::Sender<WorkerEvent>,
+    /// Allow the controller to completely disable worker spawns in a post-exploit environment
+    disable_spawns: Arc<Mutex<bool>>,
 }
 
 impl WorkerManager {
@@ -32,6 +34,7 @@ impl WorkerManager {
             workers: Arc::new(Mutex::new(HashMap::new())),
             pending_connections: Arc::new(Mutex::new(HashMap::new())),
             event_tx,
+            disable_spawns: Arc::new(Mutex::new(false)),
         }
     }
 
@@ -103,7 +106,7 @@ impl WorkerManager {
         {
             let mut workers_lock = workers.lock().await;
             workers_lock.insert(worker_uid.clone(), worker_connection.clone());
-            info!("Added worker for UID {worker_uid:?} to active connections",);
+            info!("Added worker for UID {worker_uid:?} to active connections");
         }
 
         // Notify any pending requests for this UID
@@ -158,7 +161,22 @@ impl WorkerManager {
         ))
     }
 
+    pub async fn all_workers(&self) -> Vec<WorkerConnection> {
+        self.workers
+            .lock()
+            .await
+            .values()
+            .map(|worker| worker.clone())
+            .collect()
+    }
+
     async fn spawn_worker(&self, uid: UID, se_info: Option<String>) -> Result<WorkerConnection> {
+        if *self.disable_spawns.lock().await {
+            return Err(Error::WorkerProtocolError(
+                "Worker spawns are disabled".into(),
+            ));
+        }
+
         // No existing worker, spawn new one
         info!("Spawning new worker for UID {uid:?}");
         let (tx, rx) = oneshot::channel();
@@ -223,6 +241,24 @@ impl WorkerManager {
                 )))
             }
         }
+    }
+
+    pub async fn disable_spawning(&self) {
+        *self.disable_spawns.lock().await = true;
+    }
+
+    pub async fn wait_for_worker_reconnections(&self) -> Result<()> {
+        let wait_timeout = WORKER_CONTROLLER_POLL_INTERVAL * 4;
+
+        info!(
+            "Waiting {}ms for existing workers to reconnect...",
+            wait_timeout.as_millis()
+        );
+
+        sleep(wait_timeout).await;
+
+        info!("Worker reconnection wait period ended");
+        Ok(())
     }
 
     pub async fn shutdown_all(&self) -> Result<()> {

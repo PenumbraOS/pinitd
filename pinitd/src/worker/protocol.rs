@@ -34,6 +34,8 @@ pub enum WorkerCommand {
     Shutdown,
     /// Reparent the target PID under the primary uid_1000 cgroup. This prevents killing the process in a Zygote crash (see #4)
     CGroupReparentCommand { pid: usize },
+    /// Request current state of all services from worker
+    RequestCurrentState,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -46,6 +48,8 @@ pub enum WorkerResponse {
     Status(HashMap<String, ServiceRunState>),
     /// Worker is shutting down
     ShuttingDown,
+    /// Current state of all services (response to RequestCurrentState)
+    CurrentState(WorkerState),
 }
 
 /// Events that workers push to controller proactively
@@ -78,10 +82,23 @@ pub enum WorkerEvent {
     },
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct WorkerState {
+    pub services: Vec<ServiceState>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ServiceState {
+    pub service_name: String,
+    pub run_state: ServiceRunState,
+}
+
 impl Bincodable<'_> for WorkerCommand {}
 impl Bincodable<'_> for WorkerResponse {}
 impl Bincodable<'_> for WorkerEvent {}
 impl Bincodable<'_> for WorkerMessage {}
+impl Bincodable<'_> for WorkerState {}
+impl Bincodable<'_> for ServiceState {}
 
 impl<T> ProtocolRead<'_, T> for WorkerCommand where T: AsyncReadExt + Unpin + Send {}
 impl<T> ProtocolRead<'_, T> for WorkerResponse where T: AsyncReadExt + Unpin + Send {}
@@ -92,3 +109,7 @@ impl<T> ProtocolWrite<'_, T> for WorkerCommand where T: AsyncWriteExt + Unpin + 
 impl<T> ProtocolWrite<'_, T> for WorkerResponse where T: AsyncWriteExt + Unpin + Send {}
 impl<T> ProtocolWrite<'_, T> for WorkerEvent where T: AsyncWriteExt + Unpin + Send {}
 impl<T> ProtocolWrite<'_, T> for WorkerMessage where T: AsyncWriteExt + Unpin + Send {}
+impl<T> ProtocolRead<'_, T> for WorkerState where T: AsyncReadExt + Unpin + Send {}
+impl<T> ProtocolRead<'_, T> for ServiceState where T: AsyncReadExt + Unpin + Send {}
+impl<T> ProtocolWrite<'_, T> for WorkerState where T: AsyncWriteExt + Unpin + Send {}
+impl<T> ProtocolWrite<'_, T> for ServiceState where T: AsyncWriteExt + Unpin + Send {}

@@ -20,7 +20,7 @@ use tokio::{
 
 use crate::error::Result;
 
-use super::protocol::{WorkerCommand, WorkerEvent, WorkerMessage, WorkerResponse};
+use super::protocol::{WorkerCommand, WorkerEvent, WorkerMessage, WorkerResponse, WorkerState};
 
 /// Connection held by Controller to transfer data to/from Worker
 #[derive(Clone)]
@@ -179,6 +179,19 @@ impl WorkerConnection {
         self.connection.is_connected()
     }
 
+    pub async fn request_current_state(&self) -> Result<WorkerState> {
+        let response = self
+            .write_command(WorkerCommand::RequestCurrentState)
+            .await?;
+
+        match response {
+            WorkerResponse::CurrentState(state) => Ok(state),
+            _ => Err(crate::error::Error::WorkerProtocolError(
+                "Unexpected response to RequestCurrentState".into(),
+            )),
+        }
+    }
+
     pub async fn shutdown(&mut self) {
         self.in_shutdown = true;
         self._read_loop.lock().await.abort();
@@ -193,8 +206,11 @@ impl WorkerConnection {
             let message = WorkerMessage::read(&mut *read_lock).await?;
 
             match message {
-                WorkerMessage::Event(WorkerEvent::WorkerRegistration { worker_uid, worker_pid }) => {
-                    info!("Worker identified as UID {:?} with PID {}", worker_uid, worker_pid);
+                WorkerMessage::Event(WorkerEvent::WorkerRegistration {
+                    worker_uid,
+                    worker_pid,
+                }) => {
+                    info!("Worker identified as UID {worker_uid:?} with PID {worker_pid}",);
                     (worker_uid, worker_pid)
                 }
                 _ => {
@@ -236,7 +252,10 @@ impl WorkerConnection {
 
 impl ControllerConnection {
     pub async fn open() -> Result<Self> {
-        let stream = TcpStream::connect(WORKER_SOCKET_ADDRESS).await?;
+        let stream = timeout(Duration::from_secs(5), async move {
+            TcpStream::connect(WORKER_SOCKET_ADDRESS).await
+        })
+        .await??;
         info!("Connected to controller");
 
         Ok(ControllerConnection(Connection::from(stream, false)))

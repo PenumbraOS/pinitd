@@ -4,9 +4,17 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use crate::wrapper::daemonize;
-use pinitd_common::UID;
-use tokio::{process::Command, select, sync::Mutex, time::interval};
+use crate::{
+    worker::protocol::{ServiceState, WorkerState},
+    wrapper::daemonize,
+};
+use pinitd_common::{ServiceRunState, UID, WORKER_CONTROLLER_POLL_INTERVAL};
+use tokio::{
+    process::Command,
+    select,
+    sync::Mutex,
+    time::{interval, sleep},
+};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -49,33 +57,69 @@ impl ProcessInfo {
 pub struct WorkerProcess;
 
 impl WorkerProcess {
-    pub async fn specialize(uid: UID) -> Result<()> {
+    pub fn specialize(uid: UID) -> Result<()> {
         daemonize();
-
-        info!("Connecting to controller");
-
-        let mut connection = ControllerConnection::open().await?;
-        info!("Controller connected");
 
         info!("Worker starting with UID {uid:?}");
 
-        // Send worker identification as first message
-        let worker_pid = std::process::id() as usize;
-        let identification = WorkerEvent::WorkerRegistration {
-            worker_uid: uid.clone(),
-            worker_pid,
-        };
-        if let Err(e) = connection
-            .write_response(WorkerMessage::Event(identification))
-            .await
-        {
-            error!("Failed to send worker identification: {}", e);
-            return Err(e);
-        }
-        let start_time = SystemTime::now();
-        let running_processes = Arc::new(Mutex::new(HashMap::<String, ProcessInfo>::new()));
-        let token = CancellationToken::new();
+        // Tokio doesn't survive forking well. Start new runtime after fork
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| {
+                crate::error::Error::Unknown(format!("Failed to create runtime: {}", e))
+            })?;
 
+        rt.block_on(async move {
+            info!("Worker async runtime started for UID {uid:?}");
+
+            let start_time = SystemTime::now();
+            let running_processes = Arc::new(Mutex::new(HashMap::<String, ProcessInfo>::new()));
+
+            loop {
+                match ControllerConnection::open().await {
+                    Ok(connection) => {
+                        // Send worker identification as first message
+                        let worker_pid = std::process::id() as usize;
+                        let identification = WorkerEvent::WorkerRegistration {
+                            worker_uid: uid.clone(),
+                            worker_pid,
+                        };
+                        if let Err(e) = connection
+                            .write_response(WorkerMessage::Event(identification))
+                            .await
+                        {
+                            error!("Failed to send worker identification: {}", e);
+                            continue;
+                        }
+
+                        // Run normal worker loop with this connection
+                        if let Err(e) = Self::connection_command_loop(
+                            uid.clone(),
+                            start_time,
+                            running_processes.clone(),
+                            connection,
+                        )
+                        .await
+                        {
+                            warn!("Worker connection lost: {}", e);
+                        }
+                    }
+                    Err(_) => {
+                        sleep(WORKER_CONTROLLER_POLL_INTERVAL).await;
+                    }
+                }
+            }
+        })
+    }
+
+    async fn connection_command_loop(
+        uid: UID,
+        start_time: SystemTime,
+        running_processes: Arc<Mutex<HashMap<String, ProcessInfo>>>,
+        mut connection: ControllerConnection,
+    ) -> Result<()> {
+        let token = CancellationToken::new();
         // Send heartbeat every 30 seconds
         let mut heartbeat_interval = interval(Duration::from_secs(30));
 
@@ -96,6 +140,7 @@ impl WorkerProcess {
 
                     if let Err(e) = connection.write_response(WorkerMessage::Event(heartbeat)).await {
                         error!("Failed to send heartbeat: {}", e);
+                        return Err(e); // Connection lost
                     }
                 }
                 result = connection.read_command() => match result {
@@ -387,6 +432,25 @@ async fn handle_command(
                     Ok(WorkerResponse::Error(err))
                 }
             };
+        }
+        WorkerCommand::RequestCurrentState => {
+            info!("Received request for current worker state");
+
+            let processes = running_processes.lock().await;
+            let mut services = Vec::new();
+
+            for (name, process_info) in processes.iter() {
+                let service_state = ServiceState {
+                    service_name: name.clone(),
+                    run_state: ServiceRunState::Running {
+                        pid: Some(process_info.pid),
+                    },
+                };
+                services.push(service_state);
+            }
+
+            let worker_state = WorkerState { services };
+            return Ok(WorkerResponse::CurrentState(worker_state));
         }
     };
 
