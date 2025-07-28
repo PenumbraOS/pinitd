@@ -4,6 +4,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use crate::wrapper::daemonize;
 use pinitd_common::UID;
 use tokio::{process::Command, select, sync::Mutex, time::interval};
 use tokio_util::sync::CancellationToken;
@@ -49,6 +50,8 @@ pub struct WorkerProcess;
 
 impl WorkerProcess {
     pub async fn specialize(uid: UID) -> Result<()> {
+        daemonize();
+
         info!("Connecting to controller");
 
         let mut connection = ControllerConnection::open().await?;

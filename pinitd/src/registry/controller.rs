@@ -1,13 +1,17 @@
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+    sync::Arc,
+};
 
 use dependency_graph::{DependencyGraph, Step};
 use pinitd_common::{
-    CONFIG_DIR, ServiceRunState, ServiceStatus, UID,
+    BOOT_SUCCESS_FILE, CONFIG_DIR, ServiceRunState, ServiceStatus, UID,
     protocol::{CLICommand, CLIResponse},
     unit_config::ServiceConfig,
 };
 use tokio::{
-    fs,
+    fs::{self, File},
     sync::{Mutex, mpsc},
 };
 use tokio_util::sync::CancellationToken;
@@ -16,6 +20,7 @@ use uuid::Uuid;
 use crate::{
     controller::{pms::ProcessManagementService, worker_manager::WorkerManager},
     error::{Error, Result},
+    exploit::crash_exploit,
     state::StoredState,
     types::Service,
     unit_parsing::ParsableServiceConfig,
@@ -30,6 +35,8 @@ pub struct ControllerRegistry {
     services: Arc<Mutex<HashMap<String, Service>>>,
     stored_state: Arc<Mutex<StoredState>>,
     worker_manager: Arc<WorkerManager>,
+    service_spawning_allowed: Arc<Mutex<bool>>,
+    pending_autostart_services: Arc<Mutex<Option<Vec<String>>>>,
 }
 
 impl ControllerRegistry {
@@ -49,6 +56,8 @@ impl ControllerRegistry {
             services: Arc::new(Mutex::new(HashMap::new())),
             stored_state: Arc::new(Mutex::new(state)),
             worker_manager,
+            service_spawning_allowed: Arc::new(Mutex::new(false)),
+            pending_autostart_services: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -223,6 +232,15 @@ impl ControllerRegistry {
                 shutdown_token.cancel();
                 CLIResponse::ShuttingDown // Respond immediately
             }
+            CLICommand::ZygoteReady => {
+                info!("Zygote ready signal received. Enabling service spawning");
+                match self.handle_zygote_ready().await {
+                    Ok(_) => CLIResponse::Success("Service spawning enabled".to_string()),
+                    Err(err) => {
+                        CLIResponse::Error(format!("Failed to enable service spawning: {}", err))
+                    }
+                }
+            }
         }
     }
 
@@ -245,6 +263,15 @@ impl ControllerRegistry {
     }
 
     pub async fn service_start(&mut self, name: String, wait_for_start: bool) -> Result<bool> {
+        {
+            let spawning_allowed = self.service_spawning_allowed.lock().await;
+            if !*spawning_allowed {
+                return Err(Error::Unknown(
+                    "Service spawning is not allowed as Zygote is not ready".to_string(),
+                ));
+            }
+        }
+
         let allow_start = self
             .with_service(&name, |service| {
                 if !service.enabled() {
@@ -329,6 +356,40 @@ impl ControllerRegistry {
         }
     }
 
+    async fn handle_zygote_ready(&mut self) -> Result<()> {
+        {
+            let mut spawning_allowed = self.service_spawning_allowed.lock().await;
+            *spawning_allowed = true;
+        }
+
+        // TODO: Actually determine failure during crash scenarios while pinitd is still running
+        mark_boot_success().await;
+
+        let pending_services = {
+            let mut pending = self.pending_autostart_services.lock().await;
+            pending.take()
+        };
+
+        if let Some(pending_services) = pending_services {
+            info!(
+                "Executing queued autostart for {} services in dependency order",
+                pending_services.len()
+            );
+            for service_name in pending_services {
+                info!("Starting queued service \"{service_name}\"");
+                if let Err(err) = self
+                    .service_start_internal(service_name.clone(), true)
+                    .await
+                {
+                    error!("Failed to start queued service \"{service_name}\": {err}");
+                }
+            }
+            info!("Queued autostart sequence complete.");
+        }
+
+        Ok(())
+    }
+
     pub async fn autostart_all(&mut self) -> Result<()> {
         // Build current list of registry in case it's mutated during iteration and to drop lock
         let service_names = self.service_names().await?;
@@ -341,10 +402,75 @@ impl ControllerRegistry {
             }
         }
 
-        self.start_services_with_dependencies(autostart_services, true)
-            .await?;
+        if autostart_services.is_empty() {
+            info!("No services to autostart");
+            return Ok(());
+        }
 
-        info!("Autostart sequence complete.");
+        // Build service configs for dependency resolution
+        let mut all_service_configs = Vec::new();
+        for service_name in &autostart_services {
+            let config = self
+                .with_service(service_name, |service| Ok(service.config().clone()))
+                .await?;
+            all_service_configs.push(config);
+        }
+
+        // Resolve dependency graph once and extract service names in dependency order
+        let dependency_graph = DependencyGraph::from(&all_service_configs[..]);
+        let mut all_services_to_start = Vec::new();
+        let mut dependency_ordered_services = Vec::new();
+
+        for step in dependency_graph {
+            match step {
+                Step::Resolved(service_config) => {
+                    let service_name = service_config.name.clone();
+                    all_services_to_start.push(service_name.clone());
+                    dependency_ordered_services.push(service_name);
+                }
+                Step::Unresolved(dep_name) => {
+                    // Still try to pre-spawn worker for unresolved dependencies if they exist
+                    if let Ok(_) = self.with_service(&dep_name, |_| Ok(())).await {
+                        all_services_to_start.push(dep_name.to_string());
+                        dependency_ordered_services.push(dep_name.to_string());
+                    }
+                }
+            }
+        }
+
+        info!(
+            "Pre-spawning workers for {} total services (including dependencies)",
+            all_services_to_start.len()
+        );
+
+        // Pre-spawn workers for all services that will be started
+        let mut workers_to_spawn = HashSet::new();
+        for service_name in &all_services_to_start {
+            let worker_uid = self
+                .with_service(service_name, |service| {
+                    Ok(service.config().command.uid.clone())
+                })
+                .await?;
+            workers_to_spawn.insert(worker_uid);
+        }
+
+        for worker_uid in workers_to_spawn {
+            info!("Pre-spawning worker for UID {worker_uid:?}");
+            let _ = self
+                .worker_manager
+                .get_worker_spawning_if_necessary(worker_uid, None)
+                .await?;
+        }
+
+        {
+            let mut pending = self.pending_autostart_services.lock().await;
+            *pending = Some(dependency_ordered_services);
+        }
+
+        info!("Sending Zygote crash");
+        // TODO: Restore
+        // crash_exploit().await?;
+        info!("Awaiting Zygote crash");
 
         Ok(())
     }
@@ -431,45 +557,6 @@ impl ControllerRegistry {
 
         let id = self.register_id(name.clone()).await;
         self.service_start_with_id(name, id, wait_for_start).await
-    }
-
-    async fn start_services_with_dependencies(
-        &mut self,
-        service_names: Vec<String>,
-        wait_for_start: bool,
-    ) -> Result<()> {
-        let mut service_configs = Vec::new();
-        for name in &service_names {
-            let config = self
-                .with_service(name, |service| Ok(service.config().clone()))
-                .await?;
-            service_configs.push(config);
-        }
-
-        let dependency_graph = DependencyGraph::from(&service_configs[..]);
-
-        // Start services in dependency order
-        for step in dependency_graph {
-            match step {
-                Step::Resolved(service_config) => {
-                    info!("Autostarting service: \"{}\"", service_config.name);
-                    if let Err(err) = self
-                        .service_start_internal(service_config.name.clone(), wait_for_start)
-                        .await
-                    {
-                        error!(
-                            "Failed to autostart service \"{}\": {}",
-                            service_config.name, err
-                        );
-                    }
-                }
-                Step::Unresolved(dep_name) => {
-                    warn!("Unresolved dependency: \"{}\"", dep_name);
-                }
-            }
-        }
-
-        Ok(())
     }
 }
 
@@ -626,5 +713,19 @@ impl Registry for ControllerRegistry {
     async fn shutdown(&self) -> Result<()> {
         // Shutdown all workers using the worker manager
         self.worker_manager.shutdown_all().await
+    }
+}
+
+async fn mark_boot_success() {
+    info!("Marking pinitd boot complete");
+
+    // Create success file for Android app to detect
+    match File::create(BOOT_SUCCESS_FILE).await {
+        Ok(_) => {
+            info!("Marked boot as success");
+        }
+        Err(err) => {
+            error!("Failed to create boot success file: {}", err);
+        }
     }
 }

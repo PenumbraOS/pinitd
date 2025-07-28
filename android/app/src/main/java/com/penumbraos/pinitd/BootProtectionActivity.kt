@@ -7,6 +7,7 @@ import android.util.Log
 /**
  * Activity for ADB control of pinitd boot protection.
  */
+// adb shell am start -n com.penumbraos.pinitd/.BootProtectionActivity -e action reset
 class BootProtectionActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
