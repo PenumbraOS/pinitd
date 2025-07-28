@@ -117,51 +117,86 @@ struct InternalWrapperArgs {
     _remaining_args: Vec<String>,
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
     // Purposefully don't initialize logging until we need it, so we can specialize it for the process in question
-    match run().await {
+
+    // Parse args first to determine if we're a worker (needs special handling)
+    let args = match Args::try_parse() {
+        Ok(args) => args,
         Err(e) => {
             init_logging_with_tag("pinitd-unspecialized".into());
-            error!("{e}")
+            error!("{}", crate::error::Error::ArgError(e));
+            return;
         }
-        _ => (),
+    };
+
+    match args {
+        Args::Worker(worker_args) => {
+            handle_worker(worker_args);
+        }
+        other_args => {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("Failed to create Tokio runtime");
+
+            rt.block_on(async {
+                match run_async(other_args).await {
+                    Err(e) => {
+                        init_logging_with_tag("pinitd-unspecialized".into());
+                        error!("{e}")
+                    }
+                    _ => (),
+                }
+            });
+        }
     }
 }
 
-async fn run() -> Result<()> {
+fn handle_worker(args: WorkerArgs) {
+    init_app("pinitd-worker".into());
+    info!("Specializing worker");
+
+    // TODO: Remove
+    // Prefer --uid argument over --use-shell-domain for backward compatibility
+    let uid = if let Some(uid) = args.uid {
+        Some(uid)
+    } else if args.use_shell_domain {
+        Some("2000".to_string())
+    } else {
+        None
+    };
+
+    let uid = if let Some(uid) = uid {
+        match UID::try_from(uid.as_str()) {
+            Ok(uid) => uid,
+            Err(e) => {
+                error!("Invalid worker UID: {e}");
+                return;
+            }
+        }
+    } else {
+        UID::System
+    };
+
+    if let Err(e) = WorkerProcess::specialize(uid) {
+        error!("Worker failed: {e}");
+    }
+}
+
+async fn run_async(args: Args) -> Result<()> {
     // TODO: If we panic before initializing the logging system, we just crash without any messages
     #[cfg(target_os = "android")]
     log_panics::init();
 
-    match Args::try_parse()? {
+    match args {
         Args::Controller(args) => {
             init_app("pinitd-controller".into());
             info!("Specializing controller");
             Ok(Controller::specialize(args.use_system_domain, args.is_zygote).await?)
         }
-        Args::Worker(args) => {
-            init_app("pinitd-worker".into());
-            info!("Specializing worker");
-
-            // TODO: Remove
-            // Prefer --uid argument over --use-shell-domain for backward compatibility
-            let uid = if let Some(uid) = args.uid {
-                Some(uid)
-            } else if args.use_shell_domain {
-                Some("2000".to_string())
-            } else {
-                None
-            };
-
-            let uid = if let Some(uid) = uid {
-                UID::try_from(uid.as_str())
-                    .map_err(|e| Error::Unknown(format!("Invalid worker UID: {e}")))?
-            } else {
-                UID::System
-            };
-
-            Ok(WorkerProcess::specialize(uid).await?)
+        Args::Worker(_) => {
+            unreachable!("Worker should be handled synchronously")
         }
         Args::BuildPayload(args) => {
             init_logging_with_tag("pinitd-build".into());

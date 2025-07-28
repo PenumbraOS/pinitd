@@ -49,6 +49,7 @@ where
             let len_bytes = (buffer.len() as LengthType).to_le_bytes();
             stream.write_all(&len_bytes).await?;
             stream.write_all(&buffer).await?;
+            stream.flush().await?;
 
             Ok(())
         }

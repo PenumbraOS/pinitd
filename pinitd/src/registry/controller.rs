@@ -1,4 +1,9 @@
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    hash::RandomState,
+    path::Path,
+    sync::Arc,
+};
 
 use dependency_graph::{DependencyGraph, Step};
 use pinitd_common::{
@@ -322,6 +327,59 @@ impl ControllerRegistry {
         Ok(())
     }
 
+    pub async fn setup_workers(&self) -> Result<()> {
+        self.worker_manager.wait_for_worker_reconnections().await?;
+
+        let connected_workers = self.worker_manager.all_workers().await;
+
+        if !connected_workers.is_empty() {
+            info!(
+                "Received {} worker connections. This is a post-vulnerability controller. Locking Zygote spawns",
+                connected_workers.len()
+            );
+            self.worker_manager.disable_spawning().await;
+
+            let worker_uids = HashSet::<&UID, RandomState>::from_iter(
+                connected_workers.iter().map(|worker| worker.uid()),
+            );
+
+            for config in self.all_autostart_configs().await? {
+                if !worker_uids.contains(&config.command.uid) {
+                    error!(
+                        "Did not receive a connection from worker uid {:?} (seinfo {:?})",
+                        config.command.uid, config.se_info
+                    )
+                }
+            }
+
+            info!("Requesting current state from all workers...");
+            for worker in connected_workers {
+                match worker.request_current_state().await {
+                    Ok(state) => {
+                        info!(
+                            "Received state from worker {:?}: {} services",
+                            worker.uid(),
+                            state.services.len()
+                        );
+
+                        for service_state in state.services {
+                            self.update_service_state(
+                                service_state.service_name,
+                                service_state.run_state,
+                            )
+                            .await?;
+                        }
+                    }
+                    Err(err) => {
+                        warn!("Failed to get state from worker {:?}: {err}", worker.uid());
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     pub async fn send_cgroup_reparent_command(&self, pid: usize) -> Result<()> {
         info!("Sending CGroupReparentCommand for PID {pid} to system worker");
 
@@ -386,7 +444,11 @@ impl ControllerRegistry {
         Ok(())
     }
 
-    pub async fn autostart_all(&mut self) -> Result<()> {
+    ///
+    /// The dependency tree for all autostart configs, ordered with all dependencies before the services that require them.
+    /// May contain duplicate configs
+    ///
+    pub async fn all_autostart_configs(&self) -> Result<Vec<ServiceConfig>> {
         // Build current list of registry in case it's mutated during iteration and to drop lock
         let service_names = self.service_names().await?;
 
@@ -400,7 +462,7 @@ impl ControllerRegistry {
 
         if autostart_services.is_empty() {
             info!("No services to autostart");
-            return Ok(());
+            return Ok(Vec::new());
         }
 
         // Build service configs for dependency resolution
@@ -414,19 +476,20 @@ impl ControllerRegistry {
         }
 
         // Resolve dependency graph once and extract service names in dependency order
-        let dependency_graph = DependencyGraph::from(&all_autostart_service_configs[..]);
-        let mut service_configs_to_start = Vec::new();
-
-        for step in dependency_graph {
-            match step {
-                Step::Resolved(service_config) => {
-                    service_configs_to_start.push(service_config.clone());
-                }
+        let flattened_graph = DependencyGraph::from(&all_autostart_service_configs[..])
+            .filter_map(|step| match step {
+                Step::Resolved(service_config) => Some(service_config.clone()),
                 Step::Unresolved(dep_name) => {
                     warn!("Unresolved dependency: \"{}\"", dep_name);
+                    None
                 }
-            }
-        }
+            })
+            .collect();
+        Ok(flattened_graph)
+    }
+
+    pub async fn autostart_all(&mut self) -> Result<()> {
+        let service_configs_to_start = self.all_autostart_configs().await?;
 
         info!(
             "Pre-spawning workers for {} total services (including dependencies)",

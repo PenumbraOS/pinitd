@@ -88,7 +88,6 @@ suspend fun launchPinitd(scope: CoroutineScope, context: Context, protection: Bo
         val fileWatcher = FileWatcher()
         fileWatcher.clearStatus()
         
-//        val process = Runtime.getRuntime().exec(arrayOf(binaryPath, "build-payload", "--use-system-domain"))
         val process = Runtime.getRuntime().exec(arrayOf(binaryPath, "build-payload"))
 
         val reader = BufferedReader(InputStreamReader(process.inputStream))
@@ -105,7 +104,7 @@ suspend fun launchPinitd(scope: CoroutineScope, context: Context, protection: Bo
         Log.w(SHARED_TAG, "Payload set")
         startApp("Settings", context, settingsIntent)
 
-        if (logcat.waitForSubstring("com.android.settings/1000 for top-activity {com.android.settings/com.android.settings.Settings", 1000.milliseconds)) {
+        if (logcat.waitForSubstring("com.android.settings/1000 for top-activity", 1000.milliseconds)) {
             Log.w(SHARED_TAG, "Received settings launch log. Sending exemptions clear")
         } else {
             Log.w(SHARED_TAG, "Didn't receive settings launch log. Sending exemptions clear anyway")

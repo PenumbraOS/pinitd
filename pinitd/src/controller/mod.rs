@@ -1,6 +1,5 @@
 use std::{process, time::Duration};
 
-use crate::wrapper::daemonize;
 use file_lock::{FileLock, FileOptions};
 use pinitd_common::{
     CONTROL_SOCKET_ADDRESS, CONTROLLER_LOCK_FILE, create_core_directories,
@@ -79,8 +78,7 @@ impl Controller {
         let mut controller = Controller { registry };
 
         controller.registry.load_from_disk().await?;
-
-        daemonize();
+        controller.registry.setup_workers().await?;
 
         let shutdown_token = CancellationToken::new();
         let shutdown_signal = setup_signal_watchers(shutdown_token.clone())?;

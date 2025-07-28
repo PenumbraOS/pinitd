@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs::create_dir_all,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 pub mod android;
@@ -36,6 +37,8 @@ pub const BOOT_SUCCESS_FILE: &str = "/sdcard/penumbra/etc/pinitd/boot_success";
 pub const BOOT_SUCCESS_FILE: &str = "test_data/pinitd/boot_success";
 
 pub const PACKAGE_NAME: &str = "com.penumbraos.pinitd";
+
+pub const WORKER_CONTROLLER_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum ServiceRunState {
