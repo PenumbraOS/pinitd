@@ -4,6 +4,7 @@ adb shell mkdir /data/local/tmp/bin
 adb push target/aarch64-linux-android/release/pinitd-cli /data/local/tmp/bin/pinitd-cli
 adb shell chmod +x /data/local/tmp/bin/pinitd-cli
 cp target/aarch64-linux-android/release/pinitd android/app/src/main/jniLibs/arm64-v8a/libpinitd.so
+cp target/aarch64-linux-android/release/pinitd-cli android/app/src/main/jniLibs/arm64-v8a/libpinitd-cli.so
 cd android && ./gradlew installDebug
 adb shell pm grant com.penumbraos.pinitd android.permission.WRITE_SECURE_SETTINGS
 adb shell pm grant com.penumbraos.pinitd android.permission.READ_LOGS

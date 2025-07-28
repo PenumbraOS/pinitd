@@ -11,8 +11,13 @@ import kotlinx.coroutines.launch
 
 class BootCompletedReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
-        if (context != null && intent?.action == Intent.ACTION_BOOT_COMPLETED) {
-//            launchWithBootProtection(context)
+        if (context != null) {
+            if (intent?.action == Intent.ACTION_BOOT_COMPLETED) {
+//                launchWithBootProtection(context)
+            } else if (intent?.action == Intent.ACTION_SHUTDOWN) {
+                Log.w(SHARED_TAG, "Clearing exemptions for shutdown")
+                context.contentResolver.delete(EXEMPTIONS_SETTING_URI, null, null)
+            }
         }
     }
 }

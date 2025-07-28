@@ -164,7 +164,7 @@ async fn run() -> Result<()> {
             Ok(WorkerProcess::specialize(uid).await?)
         }
         Args::BuildPayload(args) => {
-            init_app("pinitd-build".into());
+            init_logging_with_tag("pinitd-build".into());
             info!("Building init payload only");
             let payload = init_payload(args.use_system_domain)?;
             // Write to stdout
@@ -223,22 +223,24 @@ fn init_payload(use_system_domain: bool) -> Result<String> {
             "com.android.settings",
             "platform:system_app:targetSdkVersion=29:complete",
             &ExploitKind::Command(format!(
-                "exec {executable} internal-wrapper --is-zygote \"{executable} controller --disable-worker --use-system-domain\"",
+                "exec {executable} internal-wrapper --is-zygote \"{executable} controller --use-system-domain\"",
             )),
             None,
         )?.payload)
     } else {
-        Ok(exploit.new_launch_payload(
-            2000,
-            None,
-            None,
-            "/data/local/tmp/",
-            "com.android.shell",
-            "platform:shell:targetSdkVersion=29:complete",
-            &ExploitKind::Command(format!(
-                "exec {executable} internal-wrapper --is-zygote \"{executable} controller --disable-worker\"",
-            )),
-            Some("com.android.shell"),
-        )?.payload)
+        Ok(exploit
+            .new_launch_payload(
+                2000,
+                None,
+                None,
+                "/data/local/tmp/",
+                "com.android.shell",
+                "platform:shell:targetSdkVersion=29:complete",
+                &ExploitKind::Command(format!(
+                    "exec {executable} internal-wrapper --is-zygote \"{executable} controller\"",
+                )),
+                Some("com.android.shell"),
+            )?
+            .payload)
     }
 }

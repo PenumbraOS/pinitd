@@ -26,10 +26,10 @@ fun launchWithBootProtection(context: Context) {
     context.contentResolver.delete(EXEMPTIONS_SETTING_URI, null, null)
 
     val protection = BootLoopProtection(context)
+    protection.recordAttempt()
 
     if (protection.shouldAttemptLaunch()) {
         Log.w(SHARED_TAG, "Boot protection allows launch, proceeding")
-        protection.recordAttempt()
 
         val scope = CoroutineScope(Dispatchers.IO)
         scope.launch {

@@ -1,8 +1,9 @@
 use std::{process, time::Duration};
 
+use crate::wrapper::daemonize;
 use file_lock::{FileLock, FileOptions};
 use pinitd_common::{
-    BOOT_SUCCESS_FILE, CONTROL_SOCKET_ADDRESS, CONTROLLER_LOCK_FILE, create_core_directories,
+    CONTROL_SOCKET_ADDRESS, CONTROLLER_LOCK_FILE, create_core_directories,
     protocol::{
         CLICommand, CLIResponse,
         writable::{ProtocolRead, ProtocolWrite},
@@ -10,19 +11,18 @@ use pinitd_common::{
 };
 use pms::ProcessManagementService;
 use tokio::{
-    fs::File,
     io::AsyncRead,
     net::TcpListener,
     signal::unix::{SignalKind, signal},
     sync::mpsc,
     task::JoinHandle,
-    time::sleep,
+    time::timeout,
 };
 use tokio_util::sync::CancellationToken;
 use worker::start_worker_event_watcher;
 
 use crate::{
-    error::Result,
+    error::{Error, Result},
     exploit::{exploit, init_exploit},
     registry::{Registry, controller::ControllerRegistry},
     worker::protocol::WorkerEvent,
@@ -56,12 +56,14 @@ impl Controller {
         info!("Acquired file lock");
 
         if is_zygote {
-            init_zygote_with_fd().await;
+            if let Err(_) = timeout(Duration::from_secs(5), async move {
+                init_zygote_with_fd().await;
+            })
+            .await
+            {
+                return Err(Error::ZygoteError("Timed out sending Zygote pid".into()));
+            }
         }
-
-        info!("Delaying to allow Zygote to settle");
-        sleep(Duration::from_millis(50)).await;
-
         init_exploit(use_system_domain).await?;
 
         info!("Sending exploit force clear");
@@ -78,20 +80,26 @@ impl Controller {
 
         controller.registry.load_from_disk().await?;
 
+        daemonize();
+
         let shutdown_token = CancellationToken::new();
         let shutdown_signal = setup_signal_watchers(shutdown_token.clone())?;
 
         start_worker_event_watcher(controller.registry.clone(), global_worker_event_rx);
 
         info!("Controller started");
-        
+
         // Reparent controller process to system cgroup
         let controller_pid = std::process::id() as usize;
-        info!("Reparenting controller process (PID {}) to system cgroup", controller_pid);
-        if let Err(e) = controller.registry.send_cgroup_reparent_command(controller_pid).await {
+        info!("Reparenting controller process (PID {controller_pid}) to system cgroup",);
+        if let Err(e) = controller
+            .registry
+            .send_cgroup_reparent_command(controller_pid)
+            .await
+        {
             error!("Failed to reparent controller process: {}", e);
         }
-        
+
         let controller_clone = controller.clone();
         tokio::spawn(async move {
             let _ = controller_clone
@@ -101,10 +109,6 @@ impl Controller {
 
         info!("Autostarting services");
         controller.registry.autostart_all().await?;
-
-        // TODO: Actually determine failure during crash scenarios while pinitd is still running
-        sleep(Duration::from_secs(5)).await;
-        mark_boot_success().await;
 
         let _ = shutdown_signal.await;
         info!("Shutting down");
@@ -186,20 +190,6 @@ fn setup_signal_watchers(shutdown_token: CancellationToken) -> Result<JoinHandle
     });
 
     Ok(shutdown_signal_task)
-}
-
-async fn mark_boot_success() {
-    info!("Marking pinitd boot complete");
-
-    // Create success file for Android app to detect
-    match File::create(BOOT_SUCCESS_FILE).await {
-        Ok(_) => {
-            info!("Marked boot as success");
-        }
-        Err(err) => {
-            error!("Failed to create boot success file: {}", err);
-        }
-    }
 }
 
 async fn shutdown(registry: ControllerRegistry) -> Result<()> {

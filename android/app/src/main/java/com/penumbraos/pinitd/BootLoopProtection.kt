@@ -6,6 +6,7 @@ import android.util.Log
 import kotlin.math.min
 import kotlin.math.pow
 import androidx.core.content.edit
+import java.util.concurrent.TimeUnit
 
 private const val KEY_FAILURE_COUNT = "failure_count"
 private const val KEY_LAST_ATTEMPT_TIME = "last_attempt_time"
@@ -45,8 +46,35 @@ class BootLoopProtection(private val context: Context) {
                 return false
             }
         }
-        
-        return true
+
+        val basePath = context.packageCodePath.slice(0..context.packageCodePath.length-9)
+        val binaryPath = basePath + "lib/arm64/libpinitd-cli.so"
+        Log.w(SHARED_TAG, "Attempting to launch: $binaryPath")
+
+        try {
+            val process = Runtime.getRuntime().exec(arrayOf(binaryPath, "zygote-ready"))
+            if (!process.waitFor(1, TimeUnit.SECONDS)) {
+                Log.w(
+                    SHARED_TAG,
+                    "Timed out trying to communicate with pinitd. pinitd may not be running. Assuming launch is required"
+                )
+                return true
+            }
+
+            return if (process.exitValue() == 0) {
+                Log.w(SHARED_TAG, "Existing pinitd has been marked Zygote ready. Blocking launch")
+                false
+            } else {
+                Log.w(
+                    SHARED_TAG,
+                    "Failed to mark Zygote ready. pinitd may not be running. Assuming launch is required"
+                )
+                true
+            }
+        } catch (e: Exception) {
+            Log.e(SHARED_TAG, "Failed to communicate with pinitd: ${e.message}")
+            return false
+        }
     }
     
     fun recordAttempt() {

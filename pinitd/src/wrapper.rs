@@ -1,6 +1,6 @@
 use std::{process::Stdio, time::Duration};
 
-use daemonize::Daemonize;
+use nix::unistd::{ForkResult, fork};
 use pinitd_common::{
     PMS_SOCKET_ADDRESS,
     protocol::{
@@ -84,13 +84,6 @@ impl Wrapper {
             }
         };
 
-        let daemonize = Daemonize::new();
-
-        match daemonize.start() {
-            Ok(_) => info!("Daemonized id {pinit_id}"),
-            Err(err) => error!("Failed to daemonize id {pinit_id}: {err}"),
-        }
-
         let mut wrapper = Wrapper { stream };
 
         let child = Self::specialize_without_monitoring(command, using_zygote_spawn, false).await?;
@@ -147,4 +140,40 @@ async fn negoticate_launch(stream: &mut TcpStream, pinit_id: Uuid) -> Result<()>
         Ok(())
     })
     .await?
+}
+
+pub fn daemonize() {
+    match unsafe { fork() } {
+        Ok(ForkResult::Parent { child: _ }) => {
+            info!("Parent process exiting after first fork");
+            std::process::exit(0);
+        }
+        Ok(ForkResult::Child) => {
+            info!("First child continuing");
+        }
+        Err(err) => {
+            error!("Failed to fork: {err}");
+            std::process::exit(1);
+        }
+    }
+
+    match unsafe { fork() } {
+        Ok(ForkResult::Parent { child: _ }) => {
+            info!("First child exiting after second fork");
+            std::process::exit(0);
+        }
+        Ok(ForkResult::Child) => {
+            info!("Second child (daemon) continuing");
+        }
+        Err(err) => {
+            error!("Failed to second fork: {err}");
+            std::process::exit(1);
+        }
+    }
+
+    // Create new session
+    match nix::unistd::setsid() {
+        Ok(_) => info!("Successfully switched to self-owned process group"),
+        Err(err) => error!("Failed to create new self-owned process group {err}"),
+    }
 }
