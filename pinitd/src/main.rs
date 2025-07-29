@@ -18,11 +18,10 @@ use uuid::Uuid;
 use worker::process::WorkerProcess;
 use wrapper::Wrapper;
 
-use crate::error::Error;
-
 mod controller;
 mod error;
 mod exploit;
+mod file;
 #[cfg(not(target_os = "android"))]
 mod log;
 mod registry;
@@ -120,7 +119,7 @@ struct InternalWrapperArgs {
 fn main() {
     // Purposefully don't initialize logging until we need it, so we can specialize it for the process in question
 
-    // Parse args first to determine if we're a worker (needs special handling)
+    // Parse args first to determine if we're a controller/worker (needs special handling)
     let args = match Args::try_parse() {
         Ok(args) => args,
         Err(e) => {
@@ -130,9 +129,39 @@ fn main() {
         }
     };
 
-    match args {
-        Args::Worker(worker_args) => {
-            handle_worker(worker_args);
+    let result = match args {
+        Args::Controller(args) => {
+            init_app("pinitd-controller".into());
+            info!("Specializing controller");
+            Controller::specialize(args.use_system_domain, args.is_zygote)
+        }
+        Args::Worker(args) => {
+            init_app("pinitd-worker".into());
+            info!("Specializing worker");
+
+            // TODO: Remove
+            // Prefer --uid argument over --use-shell-domain for backward compatibility
+            let uid = if let Some(uid) = args.uid {
+                Some(uid)
+            } else if args.use_shell_domain {
+                Some("2000".to_string())
+            } else {
+                None
+            };
+
+            let uid = if let Some(uid) = uid {
+                match UID::try_from(uid.as_str()) {
+                    Ok(uid) => uid,
+                    Err(e) => {
+                        error!("Invalid worker UID: {e}");
+                        return;
+                    }
+                }
+            } else {
+                UID::System
+            };
+
+            WorkerProcess::specialize(uid)
         }
         other_args => {
             let rt = tokio::runtime::Builder::new_multi_thread()
@@ -140,60 +169,23 @@ fn main() {
                 .build()
                 .expect("Failed to create Tokio runtime");
 
-            rt.block_on(async {
-                match run_async(other_args).await {
-                    Err(e) => {
-                        init_logging_with_tag("pinitd-unspecialized".into());
-                        error!("{e}")
-                    }
-                    _ => (),
-                }
-            });
+            rt.block_on(async { run_async(other_args).await })
         }
-    }
-}
-
-fn handle_worker(args: WorkerArgs) {
-    init_app("pinitd-worker".into());
-    info!("Specializing worker");
-
-    // TODO: Remove
-    // Prefer --uid argument over --use-shell-domain for backward compatibility
-    let uid = if let Some(uid) = args.uid {
-        Some(uid)
-    } else if args.use_shell_domain {
-        Some("2000".to_string())
-    } else {
-        None
     };
 
-    let uid = if let Some(uid) = uid {
-        match UID::try_from(uid.as_str()) {
-            Ok(uid) => uid,
-            Err(e) => {
-                error!("Invalid worker UID: {e}");
-                return;
-            }
+    match result {
+        Err(err) => {
+            init_logging_with_tag("pinitd-unspecialized".into());
+            error!("{err}")
         }
-    } else {
-        UID::System
-    };
-
-    if let Err(e) = WorkerProcess::specialize(uid) {
-        error!("Worker failed: {e}");
+        _ => (),
     }
 }
 
 async fn run_async(args: Args) -> Result<()> {
-    // TODO: If we panic before initializing the logging system, we just crash without any messages
-    #[cfg(target_os = "android")]
-    log_panics::init();
-
     match args {
-        Args::Controller(args) => {
-            init_app("pinitd-controller".into());
-            info!("Specializing controller");
-            Ok(Controller::specialize(args.use_system_domain, args.is_zygote).await?)
+        Args::Controller(_) => {
+            unreachable!("Controller should be handled synchronously")
         }
         Args::Worker(_) => {
             unreachable!("Worker should be handled synchronously")
@@ -231,6 +223,10 @@ fn init_logging_with_tag(tag: String) {
     let config = Config::default().with_tag(tag);
 
     ai_pin_logger::init_once(config.with_max_level(LevelFilter::Trace));
+
+    // TODO: If we panic before initializing the logging system, we just crash without any messages
+    #[cfg(target_os = "android")]
+    log_panics::init();
 }
 
 #[cfg(not(target_os = "android"))]

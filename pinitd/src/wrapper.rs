@@ -50,7 +50,7 @@ impl Wrapper {
         }
 
         if using_zygote_spawn {
-            init_zygote_with_fd().await;
+            init_zygote_with_fd();
         }
 
         let command = format!("exec {command}");
@@ -142,7 +142,10 @@ async fn negoticate_launch(stream: &mut TcpStream, pinit_id: Uuid) -> Result<()>
     .await?
 }
 
-pub fn daemonize() {
+pub fn daemonize<F>(future: F) -> Result<F::Output>
+where
+    F: Future,
+{
     match unsafe { fork() } {
         Ok(ForkResult::Parent { child: _ }) => {
             info!("Parent process exiting after first fork");
@@ -176,4 +179,12 @@ pub fn daemonize() {
         Ok(_) => info!("Successfully switched to self-owned process group"),
         Err(err) => error!("Failed to create new self-owned process group {err}"),
     }
+
+    // Tokio doesn't survive forking well. Start new runtime after fork
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| Error::Unknown(format!("Failed to create runtime: {}", e)))?;
+
+    Ok(rt.block_on(future))
 }
