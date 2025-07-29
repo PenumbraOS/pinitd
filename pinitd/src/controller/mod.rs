@@ -78,7 +78,7 @@ impl Controller {
         let mut controller = Controller { registry };
 
         controller.registry.load_from_disk().await?;
-        controller.registry.setup_workers().await?;
+        let post_exploit = controller.registry.setup_workers().await?;
 
         let shutdown_token = CancellationToken::new();
         let shutdown_signal = setup_signal_watchers(shutdown_token.clone())?;
@@ -106,7 +106,7 @@ impl Controller {
         });
 
         info!("Autostarting services");
-        controller.registry.autostart_all().await?;
+        controller.registry.autostart_all(post_exploit).await?;
 
         let _ = shutdown_signal.await;
         info!("Shutting down");

@@ -21,7 +21,7 @@ use uuid::Uuid;
 use crate::{
     controller::{pms::ProcessManagementService, worker_manager::WorkerManager},
     error::{Error, Result},
-    exploit::crash_exploit,
+    exploit::trigger_exploit_crash,
     state::StoredState,
     types::Service,
     unit_parsing::ParsableServiceConfig,
@@ -327,14 +327,15 @@ impl ControllerRegistry {
         Ok(())
     }
 
-    pub async fn setup_workers(&self) -> Result<()> {
+    /// Set up worker processes, restoring existing ones if available. Returns true if this is a post-exploit controller
+    pub async fn setup_workers(&self) -> Result<bool> {
         self.worker_manager.wait_for_worker_reconnections().await?;
 
         let connected_workers = self.worker_manager.all_workers().await;
 
         if !connected_workers.is_empty() {
             info!(
-                "Received {} worker connections. This is a post-vulnerability controller. Locking Zygote spawns",
+                "Received {} worker connections. This is a post-exploit controller. Locking Zygote spawns",
                 connected_workers.len()
             );
             self.worker_manager.disable_spawning().await;
@@ -375,9 +376,11 @@ impl ControllerRegistry {
                     }
                 }
             }
-        }
 
-        Ok(())
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     pub async fn send_cgroup_reparent_command(&self, pid: usize) -> Result<()> {
@@ -488,7 +491,7 @@ impl ControllerRegistry {
         Ok(flattened_graph)
     }
 
-    pub async fn autostart_all(&mut self) -> Result<()> {
+    pub async fn autostart_all(&mut self, post_exploit: bool) -> Result<()> {
         let service_configs_to_start = self.all_autostart_configs().await?;
 
         info!(
@@ -496,15 +499,17 @@ impl ControllerRegistry {
             service_configs_to_start.len()
         );
 
-        for config in &service_configs_to_start {
-            info!("Pre-spawning worker for UID {:?}", config.command.uid);
-            let _ = self
-                .worker_manager
-                .get_worker_spawning_if_necessary(
-                    config.command.uid.clone(),
-                    config.se_info.clone(),
-                )
-                .await?;
+        if !post_exploit {
+            for config in &service_configs_to_start {
+                info!("Pre-spawning worker for UID {:?}", config.command.uid);
+                let _ = self
+                    .worker_manager
+                    .get_worker_spawning_if_necessary(
+                        config.command.uid.clone(),
+                        config.se_info.clone(),
+                    )
+                    .await?;
+            }
         }
 
         {
@@ -517,10 +522,19 @@ impl ControllerRegistry {
             );
         }
 
-        info!("Sending Zygote crash");
-        // TODO: Restore
-        // crash_exploit().await?;
-        info!("Awaiting Zygote crash");
+        if post_exploit {
+            info!("Autostarting services");
+            for config in service_configs_to_start {
+                info!("Autostarting service: \"{}\"", config.name);
+                if let Err(err) = self.service_start_internal(config.name.clone(), true).await {
+                    error!("Failed to autostart service \"{}\": {err}", config.name);
+                }
+            }
+        } else {
+            info!("Sending Zygote crash");
+            trigger_exploit_crash().await?;
+            info!("Awaiting Zygote crash");
+        }
 
         Ok(())
     }
