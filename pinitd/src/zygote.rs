@@ -7,7 +7,7 @@ use std::{
 
 use crate::error::{Error, Result};
 
-pub async fn init_zygote_with_fd() {
+pub fn init_zygote_with_fd() {
     #[cfg(target_os = "android")]
     {
         // info!("Delaying so Zygote can settle before pid write");

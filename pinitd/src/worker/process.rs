@@ -58,20 +58,8 @@ pub struct WorkerProcess;
 
 impl WorkerProcess {
     pub fn specialize(uid: UID) -> Result<()> {
-        daemonize();
-
-        info!("Worker starting with UID {uid:?}");
-
-        // Tokio doesn't survive forking well. Start new runtime after fork
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| {
-                crate::error::Error::Unknown(format!("Failed to create runtime: {}", e))
-            })?;
-
-        rt.block_on(async move {
-            info!("Worker async runtime started for UID {uid:?}");
+        daemonize(async move {
+            info!("Worker started for UID {uid:?}");
 
             let start_time = SystemTime::now();
             let running_processes = Arc::new(Mutex::new(HashMap::<String, ProcessInfo>::new()));

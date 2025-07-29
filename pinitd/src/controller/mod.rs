@@ -1,8 +1,7 @@
-use std::{process, time::Duration};
+use std::{process, sync::Arc, time::Duration};
 
-use file_lock::{FileLock, FileOptions};
 use pinitd_common::{
-    CONTROL_SOCKET_ADDRESS, CONTROLLER_LOCK_FILE, create_core_directories,
+    CONTROL_SOCKET_ADDRESS, create_core_directories,
     protocol::{
         CLICommand, CLIResponse,
         writable::{ProtocolRead, ProtocolWrite},
@@ -13,18 +12,20 @@ use tokio::{
     io::AsyncRead,
     net::TcpListener,
     signal::unix::{SignalKind, signal},
-    sync::mpsc,
+    sync::{Mutex, mpsc},
     task::JoinHandle,
-    time::timeout,
+    time::sleep,
 };
 use tokio_util::sync::CancellationToken;
 use worker::start_worker_event_watcher;
 
 use crate::{
-    error::{Error, Result},
-    exploit::{exploit, init_exploit},
+    error::Result,
+    exploit::{exploit, init_exploit, trigger_exploit_crash},
+    file::acquire_controller_lock,
     registry::{Registry, controller::ControllerRegistry},
     worker::protocol::WorkerEvent,
+    wrapper::daemonize,
     zygote::init_zygote_with_fd,
 };
 
@@ -39,84 +40,91 @@ pub struct Controller {
 }
 
 impl Controller {
-    pub async fn specialize(use_system_domain: bool, is_zygote: bool) -> Result<()> {
-        // Acquire lock
-        // TODO: We have to have a wrapped process so Zygote can't kill us
-        let options = FileOptions::new().read(true).write(true).create(true);
-
-        info!("Acquiring {CONTROLLER_LOCK_FILE}");
-        let lock = match FileLock::lock(CONTROLLER_LOCK_FILE, false, options) {
-            Ok(lock) => lock,
-            Err(err) => {
-                error!("Controller lock is already owned. Dying: {err}");
+    pub fn specialize(use_system_domain: bool, is_zygote: bool) -> Result<()> {
+        let controller_lock = match acquire_controller_lock() {
+            Some(lock) => lock,
+            None => {
+                error!("Controller lock is already owned. Dying");
                 return Ok(());
             }
         };
-        info!("Acquired file lock");
 
         if is_zygote {
-            if let Err(_) = timeout(Duration::from_secs(5), async move {
-                init_zygote_with_fd().await;
-            })
-            .await
+            init_zygote_with_fd();
+        }
+
+        daemonize(async move {
+            init_exploit(use_system_domain).await?;
+
+            info!("Sending exploit force clear");
+            let _ = exploit()?.force_clear_exploit();
+
+            create_core_directories();
+
+            let (worker_event_tx, global_worker_event_rx) = mpsc::channel::<WorkerEvent>(100);
+
+            let controller_lock = Arc::new(Mutex::new(Some(controller_lock)));
+            let mut registry =
+                ControllerRegistry::new(worker_event_tx, controller_lock.clone()).await?;
+            let pms = ProcessManagementService::new(registry.clone()).await?;
+            registry.set_pms(pms).await;
+            let mut controller = Controller { registry };
+
+            controller.registry.load_from_disk().await?;
+            let post_exploit = controller.registry.setup_workers().await?;
+
+            let shutdown_token = CancellationToken::new();
+            let shutdown_signal = setup_signal_watchers(shutdown_token.clone())?;
+
+            start_worker_event_watcher(controller.registry.clone(), global_worker_event_rx);
+
+            info!("Controller started");
+
+            // Reparent controller process to system cgroup
+            let controller_pid = std::process::id() as usize;
+            info!("Reparenting controller process (PID {controller_pid}) to system cgroup",);
+            if let Err(e) = controller
+                .registry
+                .send_cgroup_reparent_command(controller_pid)
+                .await
             {
-                return Err(Error::ZygoteError("Timed out sending Zygote pid".into()));
+                error!("Failed to reparent controller process: {}", e);
             }
-        }
-        init_exploit(use_system_domain).await?;
 
-        info!("Sending exploit force clear");
-        let _ = exploit()?.force_clear_exploit();
+            let controller_clone = controller.clone();
+            tokio::spawn(async move {
+                let _ = controller_clone
+                    .start_cli_listener(shutdown_token.clone())
+                    .await;
+            });
 
-        create_core_directories();
+            info!("Autostarting services");
+            controller
+                .registry
+                .queue_autostart_all(post_exploit)
+                .await?;
 
-        let (worker_event_tx, global_worker_event_rx) = mpsc::channel::<WorkerEvent>(100);
+            if !post_exploit {
+                info!("Unlocking controller lock before crash");
+                controller.registry.unlock_controller_file_lock().await;
 
-        let mut registry = ControllerRegistry::new(worker_event_tx).await?;
-        let pms = ProcessManagementService::new(registry.clone()).await?;
-        registry.set_pms(pms).await;
-        let mut controller = Controller { registry };
+                sleep(Duration::from_millis(500)).await;
 
-        controller.registry.load_from_disk().await?;
-        let post_exploit = controller.registry.setup_workers().await?;
+                info!("Sending Zygote crash");
+                trigger_exploit_crash().await?;
+                info!("Awaiting Zygote crash");
+            }
 
-        let shutdown_token = CancellationToken::new();
-        let shutdown_signal = setup_signal_watchers(shutdown_token.clone())?;
+            let _ = shutdown_signal.await;
+            info!("Shutting down");
 
-        start_worker_event_watcher(controller.registry.clone(), global_worker_event_rx);
+            controller.registry.unlock_controller_file_lock().await;
+            shutdown(controller.registry).await?;
 
-        info!("Controller started");
+            info!("After shutdown");
 
-        // Reparent controller process to system cgroup
-        let controller_pid = std::process::id() as usize;
-        info!("Reparenting controller process (PID {controller_pid}) to system cgroup",);
-        if let Err(e) = controller
-            .registry
-            .send_cgroup_reparent_command(controller_pid)
-            .await
-        {
-            error!("Failed to reparent controller process: {}", e);
-        }
-
-        let controller_clone = controller.clone();
-        tokio::spawn(async move {
-            let _ = controller_clone
-                .start_cli_listener(shutdown_token.clone())
-                .await;
-        });
-
-        info!("Autostarting services");
-        controller.registry.autostart_all(post_exploit).await?;
-
-        let _ = shutdown_signal.await;
-        info!("Shutting down");
-
-        shutdown(controller.registry).await?;
-        let _ = lock.unlock();
-
-        info!("After shutdown");
-
-        Ok(())
+            Ok(())
+        })?
     }
 
     async fn start_cli_listener(&self, shutdown_token: CancellationToken) -> Result<()> {

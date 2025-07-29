@@ -6,6 +6,7 @@ use std::{
 };
 
 use dependency_graph::{DependencyGraph, Step};
+use file_lock::FileLock;
 use pinitd_common::{
     BOOT_SUCCESS_FILE, CONFIG_DIR, ServiceRunState, ServiceStatus, UID,
     protocol::{CLICommand, CLIResponse},
@@ -21,7 +22,7 @@ use uuid::Uuid;
 use crate::{
     controller::{pms::ProcessManagementService, worker_manager::WorkerManager},
     error::{Error, Result},
-    exploit::trigger_exploit_crash,
+    file::acquire_controller_lock,
     state::StoredState,
     types::Service,
     unit_parsing::ParsableServiceConfig,
@@ -32,6 +33,7 @@ use super::Registry;
 
 #[derive(Clone)]
 pub struct ControllerRegistry {
+    controller_lock: Arc<Mutex<Option<FileLock>>>,
     pms: Option<Box<ProcessManagementService>>,
     services: Arc<Mutex<HashMap<String, Service>>>,
     stored_state: Arc<Mutex<StoredState>>,
@@ -41,7 +43,10 @@ pub struct ControllerRegistry {
 }
 
 impl ControllerRegistry {
-    pub async fn new(worker_event_tx: mpsc::Sender<WorkerEvent>) -> Result<Self> {
+    pub async fn new(
+        worker_event_tx: mpsc::Sender<WorkerEvent>,
+        controller_lock: Arc<Mutex<Option<FileLock>>>,
+    ) -> Result<Self> {
         let state = StoredState::load().await?;
         info!("Loaded enabled state for: {:?}", state.enabled_services);
 
@@ -53,6 +58,7 @@ impl ControllerRegistry {
         worker_manager.start_listener().await?;
 
         Ok(Self {
+            controller_lock,
             pms: None,
             services: Arc::new(Mutex::new(HashMap::new())),
             stored_state: Arc::new(Mutex::new(state)),
@@ -422,6 +428,14 @@ impl ControllerRegistry {
         // TODO: Actually determine failure during crash scenarios while pinitd is still running
         mark_boot_success().await;
 
+        {
+            self.unlock_controller_file_lock().await;
+
+            if let Some(lock) = acquire_controller_lock() {
+                *self.controller_lock.lock().await = Some(lock);
+            }
+        }
+
         let pending_services = {
             let mut pending = self.pending_autostart_services.lock().await;
             pending.take()
@@ -445,6 +459,15 @@ impl ControllerRegistry {
         }
 
         Ok(())
+    }
+
+    pub async fn unlock_controller_file_lock(&self) {
+        let mut mutex = self.controller_lock.lock().await;
+        // If we are still holding the lock, make sure to unlock before we grab a new lock
+        if let Some(lock) = &*mutex {
+            let _ = lock.unlock();
+            *mutex = None;
+        }
     }
 
     ///
@@ -491,7 +514,7 @@ impl ControllerRegistry {
         Ok(flattened_graph)
     }
 
-    pub async fn autostart_all(&mut self, post_exploit: bool) -> Result<()> {
+    pub async fn queue_autostart_all(&mut self, post_exploit: bool) -> Result<()> {
         let service_configs_to_start = self.all_autostart_configs().await?;
 
         info!(
@@ -520,20 +543,6 @@ impl ControllerRegistry {
                     .map(|config| config.name.clone())
                     .collect(),
             );
-        }
-
-        if post_exploit {
-            info!("Autostarting services");
-            for config in service_configs_to_start {
-                info!("Autostarting service: \"{}\"", config.name);
-                if let Err(err) = self.service_start_internal(config.name.clone(), true).await {
-                    error!("Failed to autostart service \"{}\": {err}", config.name);
-                }
-            }
-        } else {
-            info!("Sending Zygote crash");
-            trigger_exploit_crash().await?;
-            info!("Awaiting Zygote crash");
         }
 
         Ok(())
