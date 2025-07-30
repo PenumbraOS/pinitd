@@ -25,8 +25,6 @@ pub enum CLICommand {
     // },
     List,
     Shutdown,
-    /// Hidden command used to signal Zygote has been restarted after reparenting cgroups. See #4 for more information
-    ZygoteReady,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
