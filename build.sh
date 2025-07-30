@@ -8,6 +8,7 @@ cp target/aarch64-linux-android/release/pinitd-cli android/app/src/main/jniLibs/
 cd android && ./gradlew installDebug
 adb shell pm grant com.penumbraos.pinitd android.permission.WRITE_SECURE_SETTINGS
 adb shell pm grant com.penumbraos.pinitd android.permission.READ_LOGS
+adb shell appops set com.penumbraos.pinitd MANAGE_EXTERNAL_STORAGE allow
 adb shell pm disable-user --user 0 humane.experience.systemnavigation
 sleep 1
 adb shell cmd package set-home-activity com.penumbraos.pinitd/.LauncherActivity

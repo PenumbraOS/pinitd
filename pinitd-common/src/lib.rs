@@ -32,9 +32,9 @@ pub const CONTROLLER_LOCK_FILE: &str = "/sdcard/penumbra/etc/pinitd/pinitd.lock"
 pub const CONTROLLER_LOCK_FILE: &str = "test_data/pinitd/pinitd.lock";
 
 #[cfg(target_os = "android")]
-pub const BOOT_SUCCESS_FILE: &str = "/sdcard/penumbra/etc/pinitd/boot_success";
+pub const ZYGOTE_READY_FILE: &str = "/sdcard/penumbra/etc/pinitd/zygote_ready";
 #[cfg(not(target_os = "android"))]
-pub const BOOT_SUCCESS_FILE: &str = "test_data/pinitd/boot_success";
+pub const ZYGOTE_READY_FILE: &str = "test_data/pinitd/zygote_ready";
 
 pub const PACKAGE_NAME: &str = "com.penumbraos.pinitd";
 

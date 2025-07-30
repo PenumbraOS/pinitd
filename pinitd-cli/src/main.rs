@@ -53,9 +53,6 @@ enum Commands {
 
     /// Start pinitd directly in shell domain, without vulnerability
     DebugManualStart,
-    /// Hidden command used to signal Zygote has been restarted after reparenting cgroups. See #4 for more information
-    #[command(hide = true)]
-    ZygoteReady,
 }
 
 #[tokio::main]
@@ -77,7 +74,6 @@ async fn main() -> Result<()> {
         Commands::DebugManualStart => {
             return debug_manual_start().await;
         }
-        Commands::ZygoteReady => CLICommand::ZygoteReady,
     };
 
     let mut stream = match TcpStream::connect(CONTROL_SOCKET_ADDRESS).await {

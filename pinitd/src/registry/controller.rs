@@ -1,20 +1,23 @@
 use std::{
     collections::{HashMap, HashSet},
     hash::RandomState,
+    io::ErrorKind,
     path::Path,
     sync::Arc,
+    time::Duration,
 };
 
 use dependency_graph::{DependencyGraph, Step};
 use file_lock::FileLock;
 use pinitd_common::{
-    BOOT_SUCCESS_FILE, CONFIG_DIR, ServiceRunState, ServiceStatus, UID,
+    CONFIG_DIR, ServiceRunState, ServiceStatus, UID, ZYGOTE_READY_FILE,
     protocol::{CLICommand, CLIResponse},
     unit_config::ServiceConfig,
 };
 use tokio::{
-    fs::{self, File},
+    fs,
     sync::{Mutex, mpsc},
+    time::{sleep, timeout},
 };
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -57,7 +60,7 @@ impl ControllerRegistry {
         // Start the global worker listener
         worker_manager.start_listener().await?;
 
-        Ok(Self {
+        let registry = Self {
             controller_lock,
             pms: None,
             services: Arc::new(Mutex::new(HashMap::new())),
@@ -65,7 +68,9 @@ impl ControllerRegistry {
             worker_manager,
             service_spawning_allowed: Arc::new(Mutex::new(false)),
             pending_autostart_services: Arc::new(Mutex::new(None)),
-        })
+        };
+
+        Ok(registry)
     }
 
     // Helper methods for service access
@@ -239,15 +244,6 @@ impl ControllerRegistry {
                 shutdown_token.cancel();
                 CLIResponse::ShuttingDown // Respond immediately
             }
-            CLICommand::ZygoteReady => {
-                info!("Zygote ready signal received. Enabling service spawning");
-                match self.handle_zygote_ready().await {
-                    Ok(_) => CLIResponse::Success("Service spawning enabled".to_string()),
-                    Err(err) => {
-                        CLIResponse::Error(format!("Failed to enable service spawning: {}", err))
-                    }
-                }
-            }
         }
     }
 
@@ -420,13 +416,7 @@ impl ControllerRegistry {
     }
 
     async fn handle_zygote_ready(&mut self) -> Result<()> {
-        {
-            let mut spawning_allowed = self.service_spawning_allowed.lock().await;
-            *spawning_allowed = true;
-        }
-
-        // TODO: Actually determine failure during crash scenarios while pinitd is still running
-        mark_boot_success().await;
+        *self.service_spawning_allowed.lock().await = true;
 
         {
             self.unlock_controller_file_lock().await;
@@ -436,11 +426,7 @@ impl ControllerRegistry {
             }
         }
 
-        let pending_services = {
-            let mut pending = self.pending_autostart_services.lock().await;
-            pending.take()
-        };
-
+        let pending_services = self.pending_autostart_services.lock().await.take();
         if let Some(pending_services) = pending_services {
             info!(
                 "Executing queued autostart for {} services in dependency order",
@@ -459,6 +445,63 @@ impl ControllerRegistry {
         }
 
         Ok(())
+    }
+
+    pub fn start_zygote_ready_watcher(&self) {
+        let registry = self.clone();
+        tokio::spawn(async move {
+            info!("Polling for Zygote ready file");
+            let _ = fs::remove_file(ZYGOTE_READY_FILE).await;
+
+            // This is not inline with the timeout() call as Rust won't lint + format this expression if it is for some reason
+            let watch_closure = async {
+                loop {
+                    // Check if the file exists
+                    match fs::metadata(ZYGOTE_READY_FILE).await {
+                        Ok(_) => {
+                            info!("Zygote ready file detected, triggering Zygote ready handling");
+
+                            if let Err(e) = fs::remove_file(ZYGOTE_READY_FILE).await {
+                                warn!("Failed to remove Zygote ready file: {}", e);
+                            }
+
+                            if let Err(e) = registry.clone().handle_zygote_ready().await {
+                                error!("Failed to handle Zygote ready: {}", e);
+                            }
+
+                            return;
+                        }
+                        Err(e) => {
+                            // Expected error
+                            match e.kind() {
+                                ErrorKind::NotFound => {
+                                    // File doesn't exist yet. This is normal
+                                }
+                                ErrorKind::PermissionDenied => {
+                                    warn!(
+                                        "Permission denied accessing zygote ready file path - filesystem may not be mounted"
+                                    );
+                                }
+                                _ => {
+                                    warn!("Error checking zygote ready file ({}): {}", e.kind(), e);
+                                }
+                            }
+                        }
+                    }
+
+                    sleep(Duration::from_secs(1)).await;
+                }
+            };
+
+            match timeout(Duration::from_secs(30), watch_closure).await {
+                Ok(_) => {
+                    info!("Zygote ready file polling completed successfully");
+                }
+                Err(_) => {
+                    warn!("Zygote ready file polling timed out after 30 seconds");
+                }
+            }
+        });
     }
 
     pub async fn unlock_controller_file_lock(&self) {
@@ -786,19 +829,5 @@ impl Registry for ControllerRegistry {
     async fn shutdown(&self) -> Result<()> {
         // Shutdown all workers using the worker manager
         self.worker_manager.shutdown_all().await
-    }
-}
-
-async fn mark_boot_success() {
-    info!("Marking pinitd boot complete");
-
-    // Create success file for Android app to detect
-    match File::create(BOOT_SUCCESS_FILE).await {
-        Ok(_) => {
-            info!("Marked boot as success");
-        }
-        Err(err) => {
-            error!("Failed to create boot success file: {}", err);
-        }
     }
 }

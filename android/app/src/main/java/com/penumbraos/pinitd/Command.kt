@@ -33,17 +33,7 @@ fun launchWithBootProtection(context: Context) {
 
         val scope = CoroutineScope(Dispatchers.IO)
         scope.launch {
-            // Force start systemnavigation before anything else
-            // This is due to hand sensing (namely ToF) running when systemnavigation is stopped. This should be figured out
-            // Log.w(SHARED_TAG, "Starting systemnavigation")
-            // launchApp(context, "humane.experience.systemnavigation")
-            delay(10000)
-            launchCoreApp(context)
-
             launchPinitd(scope, context, protection)
-            // After pinitd claims to have finished starting, make sure core app is foremost app
-            delay(15000)
-            launchCoreApp(context)
         }
     } else {
         Log.w(SHARED_TAG, "Boot protection blocked launch")
@@ -83,11 +73,7 @@ suspend fun launchPinitd(scope: CoroutineScope, context: Context, protection: Bo
         val logcat = Logcat(scope)
         // Make sure logcat is as up to date as possible when we start waiting on it
         logcat.eatInBackground()
-        
-        // Initialize file watcher
-        val fileWatcher = FileWatcher()
-        fileWatcher.clearStatus()
-        
+
         val process = Runtime.getRuntime().exec(arrayOf(binaryPath, "build-payload"))
 
         val reader = BufferedReader(InputStreamReader(process.inputStream))
@@ -112,16 +98,7 @@ suspend fun launchPinitd(scope: CoroutineScope, context: Context, protection: Bo
 
         context.contentResolver.delete(EXEMPTIONS_SETTING_URI, null, null)
 
-        Log.w(SHARED_TAG, "Trampoline complete, waiting for pinitd success signal")
-
-        // Wait for pinitd to signal success or failure
-        if (fileWatcher.waitForSuccess(30 * 1000)) {
-            protection.recordSuccess()
-            Log.i(SHARED_TAG, "Boot launch successful")
-        } else {
-            // Failure already recorded
-            Log.w(SHARED_TAG, "Boot launch failed or timed out")
-        }
+        Log.w(SHARED_TAG, "Trampoline complete")
 
         // TODO: Kill process after delay (to keep `ps` clean)
         Thread.sleep(500)

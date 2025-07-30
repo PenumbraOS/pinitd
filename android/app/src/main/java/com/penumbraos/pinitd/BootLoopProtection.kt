@@ -1,12 +1,13 @@
 package com.penumbraos.pinitd
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
-import kotlin.math.min
-import kotlin.math.pow
 import androidx.core.content.edit
-import java.util.concurrent.TimeUnit
+import java.io.File
+import java.io.FileInputStream
+import java.lang.Thread.sleep
 
 private const val KEY_FAILURE_COUNT = "failure_count"
 private const val KEY_LAST_ATTEMPT_TIME = "last_attempt_time"
@@ -17,9 +18,10 @@ private const val KEY_MANUAL_OVERRIDE = "manual_override"
 private const val MAX_FAILURES = 5
 private const val LAUNCH_DISABLED_TIMEOUT_S = 10 * 60
 
-class BootLoopProtection(private val context: Context) {
+class BootLoopProtection(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("pinitd_boot_protection", Context.MODE_PRIVATE)
 
+    @SuppressLint("SdCardPath")
     fun shouldAttemptLaunch(): Boolean {
         val failureCount = prefs.getInt(KEY_FAILURE_COUNT, 0)
         val lastAttemptTime = prefs.getLong(KEY_LAST_ATTEMPT_TIME, 0)
@@ -47,33 +49,38 @@ class BootLoopProtection(private val context: Context) {
             }
         }
 
-        val basePath = context.packageCodePath.slice(0..context.packageCodePath.length-9)
-        val binaryPath = basePath + "lib/arm64/libpinitd-cli.so"
-        Log.w(SHARED_TAG, "Attempting to launch: $binaryPath")
+        // Delay as SDCard might not be immediately mounted
+        sleep(5000)
+
+        // First, always signal zygote ready in case pinitd is running
+        // This must happen before checking the lock file due to zygote restart timing
+        Log.i(SHARED_TAG, "Signaling zygote ready first to handle race condition and delaying")
+        createZygoteReadyFile()
+        
+        // Give pinitd a moment to process the signal and reacquire the lock if it's running
+        sleep(5000)
+        
+        Log.i(SHARED_TAG, "Checking for running pinitd controller")
 
         try {
-            val process = Runtime.getRuntime().exec(arrayOf(binaryPath, "zygote-ready"))
-            if (!process.waitFor(1, TimeUnit.SECONDS)) {
-                Log.w(
-                    SHARED_TAG,
-                    "Timed out trying to communicate with pinitd. pinitd may not be running. Assuming launch is required"
-                )
-                return true
-            }
+            val controllerLockFile = File("/sdcard/penumbra/etc/pinitd/pinitd.lock")
+            val inputStream = FileInputStream(controllerLockFile)
+            val lock = inputStream.channel.tryLock(0, Long.MAX_VALUE, true)
 
-            return if (process.exitValue() == 0) {
-                Log.w(SHARED_TAG, "Existing pinitd has been marked Zygote ready. Blocking launch")
-                false
+            if (lock != null) {
+                Log.i(SHARED_TAG, "Controller lock file is not locked. pinitd is not running. Launch is required")
+                lock.close()
+                return true
             } else {
-                Log.w(
-                    SHARED_TAG,
-                    "Failed to mark Zygote ready. pinitd may not be running. Assuming launch is required"
-                )
-                true
+                Log.i(SHARED_TAG, "Controller lock file is locked. pinitd is running and has processed zygote ready. Preventing double launch")
+                recordSuccess()
+                Log.w(SHARED_TAG, "pinitd full startup successful")
+                return false
             }
         } catch (e: Exception) {
-            Log.e(SHARED_TAG, "Failed to communicate with pinitd: ${e.message}")
-            return false
+            Log.e(SHARED_TAG, "Failed to test controller lock file: ${e.message}")
+            e.printStackTrace()
+            return true
         }
     }
     
@@ -126,6 +133,41 @@ class BootLoopProtection(private val context: Context) {
             putInt(KEY_FAILURE_COUNT, 0)
         }
     }
+    
+    private fun createZygoteReadyFile() {
+        try {
+            val zygoteReadyFile = File("/sdcard/penumbra/etc/pinitd/zygote_ready")
+            val parentDir = zygoteReadyFile.parentFile
+
+            Log.w(SHARED_TAG, "Creating zygote ready file at ${zygoteReadyFile.absolutePath}")
+            
+            // Ensure parent directory exists
+            if (parentDir != null && !parentDir.exists()) {
+                if (parentDir.mkdirs()) {
+                    Log.w(SHARED_TAG, "Created parent directory: ${parentDir.absolutePath}")
+                } else {
+                    Log.e(SHARED_TAG, "Failed to create parent directory: ${parentDir.absolutePath}")
+                    return
+                }
+            }
+            
+            // Delete any existing file first
+            if (zygoteReadyFile.exists()) {
+                zygoteReadyFile.delete()
+            }
+
+            // Create new zygote ready file
+            if (zygoteReadyFile.createNewFile()) {
+                Log.w(SHARED_TAG, "Created zygote ready signal file at ${zygoteReadyFile.absolutePath}")
+            } else {
+                Log.e(SHARED_TAG, "Failed to create zygote ready file")
+            }
+        } catch (e: Exception) {
+            Log.e(SHARED_TAG, "Exception creating zygote ready file: ${e.message}")
+            e.printStackTrace()
+        }
+    }
+    
     
     
     fun getStatus(): String {

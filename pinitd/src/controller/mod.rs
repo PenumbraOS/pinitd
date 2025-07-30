@@ -63,9 +63,11 @@ impl Controller {
 
             let (worker_event_tx, global_worker_event_rx) = mpsc::channel::<WorkerEvent>(100);
 
-            let controller_lock = Arc::new(Mutex::new(Some(controller_lock)));
-            let mut registry =
-                ControllerRegistry::new(worker_event_tx, controller_lock.clone()).await?;
+            let mut registry = ControllerRegistry::new(
+                worker_event_tx,
+                Arc::new(Mutex::new(Some(controller_lock))),
+            )
+            .await?;
             let pms = ProcessManagementService::new(registry.clone()).await?;
             registry.set_pms(pms).await;
             let mut controller = Controller { registry };
@@ -107,6 +109,7 @@ impl Controller {
             if !post_exploit {
                 info!("Unlocking controller lock before crash");
                 controller.registry.unlock_controller_file_lock().await;
+                controller.registry.start_zygote_ready_watcher();
 
                 sleep(Duration::from_millis(500)).await;
 
