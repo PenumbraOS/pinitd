@@ -98,13 +98,11 @@ impl WorkerManager {
         )
         .await??;
 
-        let worker_uid = worker_connection.uid();
-        let worker_se_info = worker_connection.se_info();
         let worker_pid = worker_connection.pid();
-        let worker_identity = WorkerIdentity::new(worker_uid.clone(), Some(worker_se_info.clone()));
+        let worker_identity = worker_connection.identity();
 
         info!(
-            "Worker for UID {worker_uid:?} (SEInfo {worker_se_info}), PID {worker_pid} successfully connected and identified",
+            "Worker for {worker_identity:?}, PID {worker_pid} successfully connected and identified",
         );
 
         // Register worker
@@ -151,11 +149,12 @@ impl WorkerManager {
         &self,
         uid: UID,
         se_info: Option<String>,
+        launch_package: Option<String>,
     ) -> Result<WorkerConnection> {
-        let worker_identity = WorkerIdentity::new(uid.clone(), se_info.clone());
-        match self.get_worker_for_identity(&worker_identity).await {
+        let identity = WorkerIdentity::new(uid, se_info);
+        match self.get_worker_for_identity(&identity).await {
             Ok(connection) => Ok(connection),
-            Err(_) => self.spawn_worker(uid, se_info).await,
+            Err(_) => self.spawn_worker(&identity, launch_package).await,
         }
     }
 
@@ -184,14 +183,16 @@ impl WorkerManager {
             .collect()
     }
 
-    async fn spawn_worker(&self, uid: UID, se_info: Option<String>) -> Result<WorkerConnection> {
+    async fn spawn_worker(
+        &self,
+        identity: &WorkerIdentity,
+        launch_package: Option<String>,
+    ) -> Result<WorkerConnection> {
         if *self.disable_spawns.lock().await {
             return Err(Error::WorkerProtocolError(
                 "Worker spawns are disabled".into(),
             ));
         }
-
-        let identity = WorkerIdentity::new(uid.clone(), se_info.clone());
 
         // No existing worker, spawn new one
         info!("Spawning new worker for {identity:?}");
@@ -206,8 +207,7 @@ impl WorkerManager {
                 .push(tx);
         }
 
-        // Spawn the worker
-        WorkerProcess::spawn(uid.clone(), se_info.clone()).await?;
+        WorkerProcess::spawn(identity, launch_package).await?;
 
         match timeout(Duration::from_secs(15), rx).await {
             Ok(Ok(connection)) => {

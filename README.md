@@ -61,6 +61,7 @@ The following properties are under the `[Service]` header:
 | `TriggerActivity`   | No                              | An Android activity to trigger for exploit purposes. Defaults to `com.android.settings.Settings` | `[PACKAGE]/[ACTIVITY]`                                |
 | `Uid`               | No                              | The user ID to run the service as                                                                | `System`, `Shell`, or a number. Defaults to `Shell`.  |
 | `SeInfo`            | No                              | The SELinux context for the service                                                              | String                                                |
+| `LaunchPackage`     | No                              | The SELinux package name for the service. Will partially determine the final SELinux domain      | String                                                |
 | `NiceName`          | No                              | A user-friendly name for the service. Only supported for `Uid=System`                            | String                                                |
 | `Autostart`         | No                              | Whether the service should start on boot                                                         | `true` or `false`. Defaults to `false`.               |
 | `Restart`           | No                              | The restart policy for the service                                                               | `Always`, `OnFailure`, or `None`. Defaults to `None`. |

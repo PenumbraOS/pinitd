@@ -6,6 +6,8 @@ use std::{
     time::Duration,
 };
 
+use crate::unit_config::ServiceConfig;
+
 pub mod android;
 pub mod bincode;
 pub mod error;
@@ -132,5 +134,11 @@ impl WorkerIdentity {
             }
             UID::Shell => "platform:shell:targetSdkVersion=29:complete".into(),
         }
+    }
+}
+
+impl From<ServiceConfig> for WorkerIdentity {
+    fn from(value: ServiceConfig) -> Self {
+        WorkerIdentity::new(value.command.uid, value.se_info)
     }
 }

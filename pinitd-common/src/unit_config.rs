@@ -162,6 +162,7 @@ pub struct ServiceConfig {
     pub autostart: bool,
     pub restart: RestartPolicy,
     pub se_info: Option<String>,
+    pub launch_package: Option<String>,
     pub nice_name: Option<String>,
     pub unit_file_path: PathBuf,
     pub dependencies: ServiceDependencies,
