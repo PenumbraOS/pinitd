@@ -41,28 +41,6 @@ fun launchWithBootProtection(context: Context) {
     }
 }
 
-suspend fun launchCoreApp(context: Context) {
-    if (!launchApp(context, "com.penumbraos.mabl.pin")) {
-        Log.e(SHARED_TAG, "MABL not found. Starting pinitd")
-    }
-
-    // Wait for MABL to start completely and start any dependencies
-    // Once pinitd starts, Zygote will be broken
-    delay(5 * 1000)
-}
-
-fun launchApp(context: Context, packageName: String): Boolean {
-    val intent = context.packageManager.getLaunchIntentForPackage(packageName)
-    if (intent == null) {
-        return false
-    }
-
-    Log.w(SHARED_TAG, "Starting $packageName")
-    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    context.startActivity(intent)
-    return true
-}
-
 suspend fun launchPinitd(scope: CoroutineScope, context: Context, protection: BootLoopProtection) {
     // Path will end with "base.apk". Remove that and navigate to native library
     val basePath = context.packageCodePath.slice(0..context.packageCodePath.length-9)
