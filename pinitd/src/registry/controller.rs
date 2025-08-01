@@ -469,7 +469,7 @@ impl ControllerRegistry {
                                 error!("Failed to handle Zygote ready: {}", e);
                             }
 
-                            return;
+                            break;
                         }
                         Err(e) => {
                             // Expected error
