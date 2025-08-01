@@ -167,9 +167,7 @@ class BootLoopProtection(context: Context) {
             e.printStackTrace()
         }
     }
-    
-    
-    
+
     fun getStatus(): String {
         val failureCount = prefs.getInt(KEY_FAILURE_COUNT, 0)
         val lastAttemptTime = prefs.getLong(KEY_LAST_ATTEMPT_TIME, 0)
