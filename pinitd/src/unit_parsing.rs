@@ -248,12 +248,6 @@ impl ParsableServiceConfig for ServiceConfig {
             ));
         };
 
-        if nice_name.is_some() && uid != UID::System {
-            return Err(Error::ConfigError(format!(
-                "\"NiceName\" is set with a non-1000 UID. This is not currently supported"
-            )));
-        }
-
         Ok(Self {
             name,
             command,
