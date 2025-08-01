@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::{
     fs::create_dir_all,
+    hash::Hash,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -107,6 +108,29 @@ impl From<UID> for usize {
             UID::System => 1000,
             UID::Shell => 2000,
             UID::Custom(uid) => uid,
+        }
+    }
+}
+
+/// Unique identifier for a worker combining UID and SE info
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct WorkerIdentity {
+    pub uid: UID,
+    pub se_info: String,
+}
+
+impl WorkerIdentity {
+    pub fn new(uid: UID, se_info: Option<String>) -> Self {
+        let se_info = se_info.unwrap_or_else(|| Self::default_se_info(&uid));
+        Self { uid, se_info }
+    }
+
+    pub fn default_se_info(uid: &UID) -> String {
+        match uid {
+            UID::System | UID::Custom(_) => {
+                "platform:system_app:targetSdkVersion=29:complete".into()
+            }
+            UID::Shell => "platform:shell:targetSdkVersion=29:complete".into(),
         }
     }
 }

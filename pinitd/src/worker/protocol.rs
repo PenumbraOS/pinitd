@@ -58,6 +58,7 @@ pub enum WorkerEvent {
     WorkerRegistration {
         worker_uid: UID,
         worker_pid: usize,
+        worker_se_info: String,
     },
     Heartbeat {
         worker_uid: UID,

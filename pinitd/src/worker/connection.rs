@@ -27,6 +27,7 @@ use super::protocol::{WorkerCommand, WorkerEvent, WorkerMessage, WorkerResponse,
 pub struct WorkerConnection {
     connection: Connection,
     uid: UID,
+    se_info: String,
     pid: usize,
     read: Arc<Mutex<mpsc::Receiver<WorkerResponse>>>,
     _read_loop: Arc<Mutex<JoinHandle<()>>>,
@@ -166,6 +167,10 @@ impl WorkerConnection {
         &self.uid
     }
 
+    pub fn se_info(&self) -> &String {
+        &self.se_info
+    }
+
     pub fn pid(&self) -> usize {
         self.pid
     }
@@ -201,7 +206,7 @@ impl WorkerConnection {
         connection: Connection,
         worker_event_tx: mpsc::Sender<WorkerEvent>,
     ) -> Result<Self> {
-        let (uid, pid) = {
+        let (uid, pid, se_info) = {
             let mut read_lock = connection.read.lock().await;
             let message = WorkerMessage::read(&mut *read_lock).await?;
 
@@ -209,9 +214,10 @@ impl WorkerConnection {
                 WorkerMessage::Event(WorkerEvent::WorkerRegistration {
                     worker_uid,
                     worker_pid,
+                    worker_se_info,
                 }) => {
-                    info!("Worker identified as UID {worker_uid:?} with PID {worker_pid}",);
-                    (worker_uid, worker_pid)
+                    info!("Worker identified as UID {worker_uid:?} with PID {worker_pid} and se_info {worker_se_info}",);
+                    (worker_uid, worker_pid, worker_se_info)
                 }
                 _ => {
                     return Err(crate::error::Error::Unknown(
@@ -225,6 +231,7 @@ impl WorkerConnection {
         let registration_event = WorkerEvent::WorkerRegistration {
             worker_uid: uid.clone(),
             worker_pid: pid,
+            worker_se_info: se_info.clone(),
         };
         if let Err(e) = worker_event_tx.send(registration_event).await {
             error!("Failed to resend worker registration event: {}", e);
@@ -237,6 +244,7 @@ impl WorkerConnection {
         Ok(WorkerConnection {
             connection,
             uid,
+            se_info,
             pid,
             read: Arc::new(Mutex::new(read_rx)),
             _read_loop: Arc::new(Mutex::new(read_loop)),

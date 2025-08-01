@@ -75,6 +75,10 @@ struct WorkerArgs {
     #[arg(long)]
     uid: Option<String>,
 
+    /// Specify the SE info for this worker
+    #[arg(long)]
+    se_info: Option<String>,
+
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     _remaining_args: Vec<String>,
 }
@@ -161,7 +165,7 @@ fn main() {
                 UID::System
             };
 
-            WorkerProcess::specialize(uid)
+            WorkerProcess::specialize(uid, args.se_info)
         }
         other_args => {
             let rt = tokio::runtime::Builder::new_multi_thread()
