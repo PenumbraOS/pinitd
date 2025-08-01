@@ -165,9 +165,9 @@ impl WorkerProcess {
 
     /// Spawn a remote process to act as a worker for a specific UID
     #[cfg(target_os = "android")]
-    pub async fn spawn(uid: UID, se_info: Option<String>) -> Result<()> {
+    pub async fn spawn(identity: &WorkerIdentity, launch_package: Option<String>) -> Result<()> {
         // Controller runs in Shell. Shell worker spawns as child, others via Zygote
-        if uid == UID::Shell {
+        if identity.uid == UID::Shell {
             let process_path = std::env::args().next().unwrap();
             let mut cmd = tokio::process::Command::new(process_path);
             cmd.arg("worker").arg("--uid").arg("2000");
@@ -183,13 +183,13 @@ impl WorkerProcess {
         let executable = executable.display();
 
         // Convert UID to numeric value for exploit
-        let uid_arg = match &uid {
+        let uid_arg = match &identity.uid {
             UID::System => "1000".to_string(),
             UID::Shell => unreachable!("Shell handled above"),
             UID::Custom(uid_num) => uid_num.to_string(),
         };
 
-        let uid_num: usize = uid.into();
+        let uid_num: usize = identity.uid.clone().into();
 
         let worker_args = format!("{executable} worker --uid {}", uid_arg);
 
@@ -198,11 +198,8 @@ impl WorkerProcess {
             None,
             None,
             "/data/",
-            "com.android.settings",
-            se_info.as_ref().map_or(
-                "platform:system_app:targetSdkVersion=29:complete",
-                |se_info| &se_info,
-            ),
+            &launch_package.unwrap_or("com.android.settings".into()),
+            &identity.se_info,
             &ExploitKind::Command(format!(
                 "{executable} internal-wrapper --is-zygote \"{worker_args}\""
             )),
@@ -225,13 +222,13 @@ impl WorkerProcess {
 
     /// Spawn a remote process to act as a worker for a specific UID
     #[cfg(not(target_os = "android"))]
-    pub async fn spawn(uid: UID, _se_info: Option<String>) -> Result<()> {
+    pub async fn spawn(identity: &WorkerIdentity, _launch_package: Option<String>) -> Result<()> {
         let process_path = std::env::args().next().unwrap();
         let mut cmd = tokio::process::Command::new(process_path);
         cmd.arg("worker");
 
         // Add UID as argument
-        let uid_arg = match uid {
+        let uid_arg = match identity.uid {
             UID::System => "1000",
             UID::Shell => "2000",
             UID::Custom(uid_num) => {

@@ -1,7 +1,7 @@
 use std::{error::Error, sync::Arc};
 
 use pinitd_common::{
-    UID, WORKER_SOCKET_ADDRESS,
+    WORKER_SOCKET_ADDRESS, WorkerIdentity,
     protocol::writable::{ProtocolRead, ProtocolWrite},
 };
 use tokio::{
@@ -26,8 +26,7 @@ use super::protocol::{WorkerCommand, WorkerEvent, WorkerMessage, WorkerResponse,
 #[derive(Clone)]
 pub struct WorkerConnection {
     connection: Connection,
-    uid: UID,
-    se_info: String,
+    identity: WorkerIdentity,
     pid: usize,
     read: Arc<Mutex<mpsc::Receiver<WorkerResponse>>>,
     _read_loop: Arc<Mutex<JoinHandle<()>>>,
@@ -163,12 +162,8 @@ impl WorkerConnection {
         }
     }
 
-    pub fn uid(&self) -> &UID {
-        &self.uid
-    }
-
-    pub fn se_info(&self) -> &String {
-        &self.se_info
+    pub fn identity(&self) -> &WorkerIdentity {
+        &self.identity
     }
 
     pub fn pid(&self) -> usize {
@@ -216,7 +211,9 @@ impl WorkerConnection {
                     worker_pid,
                     worker_se_info,
                 }) => {
-                    info!("Worker identified as UID {worker_uid:?} with PID {worker_pid} and se_info {worker_se_info}",);
+                    info!(
+                        "Worker identified as UID {worker_uid:?} with PID {worker_pid} and se_info {worker_se_info}",
+                    );
                     (worker_uid, worker_pid, worker_se_info)
                 }
                 _ => {
@@ -243,8 +240,7 @@ impl WorkerConnection {
 
         Ok(WorkerConnection {
             connection,
-            uid,
-            se_info,
+            identity: WorkerIdentity::new(uid, Some(se_info)),
             pid,
             read: Arc::new(Mutex::new(read_rx)),
             _read_loop: Arc::new(Mutex::new(read_loop)),

@@ -38,6 +38,7 @@ impl ParsableServiceConfig for ServiceConfig {
         let mut trigger_app = None;
         let mut uid = UID::Shell;
         let mut se_info = None;
+        let mut launch_package = None;
         let mut nice_name = None;
         let mut autostart = false;
         let mut restart = RestartPolicy::None;
@@ -99,6 +100,9 @@ impl ParsableServiceConfig for ServiceConfig {
                 }
                 "SeInfo" => {
                     se_info = Some(value.trim().into());
+                }
+                "LaunchPackage" => {
+                    launch_package = Some(value.trim().into());
                 }
                 "NiceName" => {
                     nice_name = Some(value.trim().into());
@@ -254,6 +258,7 @@ impl ParsableServiceConfig for ServiceConfig {
             name,
             command,
             se_info,
+            launch_package,
             nice_name,
             autostart,
             restart,

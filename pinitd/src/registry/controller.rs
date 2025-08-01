@@ -299,18 +299,12 @@ impl ControllerRegistry {
     }
 
     pub async fn service_stop(&mut self, name: String) -> Result<()> {
-        let (uid, se_info) = self
-            .with_service(&name, |service| {
-                let config = service.config();
-                Ok((config.command.uid.clone(), config.se_info.clone()))
-            })
+        let config = self
+            .with_service(&name, |service| Ok(service.config().clone()))
             .await?;
 
-        match self
-            .worker_manager
-            .get_worker_for_identity(&WorkerIdentity::new(uid, se_info))
-            .await
-        {
+        let identity: WorkerIdentity = config.into();
+        match self.worker_manager.get_worker_for_identity(&identity).await {
             Ok(connection) => {
                 connection
                     .write_command(WorkerCommand::KillProcess {
@@ -349,16 +343,14 @@ impl ControllerRegistry {
             );
             self.worker_manager.disable_spawning().await;
 
-            let worker_uids = HashSet::<&UID, RandomState>::from_iter(
-                connected_workers.iter().map(|worker| worker.uid()),
+            let worker_identities = HashSet::<&WorkerIdentity, RandomState>::from_iter(
+                connected_workers.iter().map(|worker| worker.identity()),
             );
 
             for config in self.all_autostart_configs().await? {
-                if !worker_uids.contains(&config.command.uid) {
-                    error!(
-                        "Did not receive a connection from worker uid {:?} (seinfo {:?})",
-                        config.command.uid, config.se_info
-                    )
+                let identity: WorkerIdentity = config.clone().into();
+                if !worker_identities.contains(&identity) {
+                    error!("Did not receive a connection from worker {identity:?}",)
                 }
             }
 
@@ -368,7 +360,7 @@ impl ControllerRegistry {
                     Ok(state) => {
                         info!(
                             "Received state from worker {:?}: {} services",
-                            worker.uid(),
+                            worker.identity(),
                             state.services.len()
                         );
 
@@ -381,7 +373,10 @@ impl ControllerRegistry {
                         }
                     }
                     Err(err) => {
-                        warn!("Failed to get state from worker {:?}: {err}", worker.uid());
+                        warn!(
+                            "Failed to get state from worker {:?}: {err}",
+                            worker.identity()
+                        );
                     }
                 }
             }
@@ -398,7 +393,7 @@ impl ControllerRegistry {
         // We are always sending to system, so default se_info is sufficient
         let connection = self
             .worker_manager
-            .get_worker_spawning_if_necessary(UID::System, None)
+            .get_worker_spawning_if_necessary(UID::System, None, None)
             .await?;
 
         let response = connection
@@ -580,6 +575,7 @@ impl ControllerRegistry {
                     .get_worker_spawning_if_necessary(
                         config.command.uid.clone(),
                         config.se_info.clone(),
+                        config.launch_package.clone(),
                     )
                     .await?;
             }
@@ -719,18 +715,18 @@ impl Registry for ControllerRegistry {
         id: Uuid,
         _wait_for_start: bool,
     ) -> Result<bool> {
-        let (worker_uid, command, se_info) = self
-            .with_service(&name, |service| {
-                let config = service.config();
-                let worker_uid = config.command.uid.clone();
-                Ok((worker_uid, config.command.clone(), config.se_info.clone()))
-            })
+        let config = self
+            .with_service(&name, |service| Ok(service.config().clone()))
             .await?;
 
-        let command = command.command_string().await?;
+        let command = config.command.command_string().await?;
         let connection = self
             .worker_manager
-            .get_worker_spawning_if_necessary(worker_uid, se_info)
+            .get_worker_spawning_if_necessary(
+                config.command.uid,
+                config.se_info,
+                config.launch_package,
+            )
             .await?;
 
         let result = connection
