@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use pinitd_common::{UID, WORKER_CONTROLLER_POLL_INTERVAL, WORKER_SOCKET_ADDRESS};
+use pinitd_common::{UID, WORKER_CONTROLLER_POLL_INTERVAL, WORKER_SOCKET_ADDRESS, WorkerIdentity};
 use tokio::{
     net::TcpListener,
     sync::{Mutex, mpsc, oneshot},
@@ -16,12 +16,13 @@ use crate::{
     },
 };
 
-/// Manages multiple workers across different UIDs
+/// Manages multiple workers across different UIDs and SE info combinations
 pub struct WorkerManager {
-    /// Active worker connections by UID
-    workers: Arc<Mutex<HashMap<UID, WorkerConnection>>>,
-    /// Pending worker connection requests (UID -> completion channel)
-    pending_connections: Arc<Mutex<HashMap<UID, Vec<oneshot::Sender<WorkerConnection>>>>>,
+    /// Active worker connections by UID + se_info
+    workers: Arc<Mutex<HashMap<WorkerIdentity, WorkerConnection>>>,
+    /// Pending worker connection requests (WorkerIdentity -> completion channel)
+    pending_connections:
+        Arc<Mutex<HashMap<WorkerIdentity, Vec<oneshot::Sender<WorkerConnection>>>>>,
     /// Global event channel for all worker events
     event_tx: mpsc::Sender<WorkerEvent>,
     /// Allow the controller to completely disable worker spawns in a post-exploit environment
@@ -82,8 +83,10 @@ impl WorkerManager {
 
     async fn handle_new_connection(
         stream: tokio::net::TcpStream,
-        workers: Arc<Mutex<HashMap<UID, WorkerConnection>>>,
-        pending_connections: Arc<Mutex<HashMap<UID, Vec<oneshot::Sender<WorkerConnection>>>>>,
+        workers: Arc<Mutex<HashMap<WorkerIdentity, WorkerConnection>>>,
+        pending_connections: Arc<
+            Mutex<HashMap<WorkerIdentity, Vec<oneshot::Sender<WorkerConnection>>>>,
+        >,
         event_tx: mpsc::Sender<WorkerEvent>,
     ) -> Result<()> {
         // Create connection from stream
@@ -96,42 +99,49 @@ impl WorkerManager {
         .await??;
 
         let worker_uid = worker_connection.uid();
+        let worker_se_info = worker_connection.se_info();
         let worker_pid = worker_connection.pid();
+        let worker_identity = WorkerIdentity::new(worker_uid.clone(), Some(worker_se_info.clone()));
 
         info!(
-            "Worker for UID {worker_uid:?}, PID {worker_pid} successfully connected and identified",
+            "Worker for UID {worker_uid:?} (SEInfo {worker_se_info}), PID {worker_pid} successfully connected and identified",
         );
 
         // Register worker
         {
             let mut workers_lock = workers.lock().await;
-            workers_lock.insert(worker_uid.clone(), worker_connection.clone());
-            info!("Added worker for UID {worker_uid:?} to active connections");
+            workers_lock.insert(worker_identity.clone(), worker_connection.clone());
+            info!("Added worker for {worker_identity:?} to active connections");
         }
 
-        // Notify any pending requests for this UID
+        // Notify any pending requests for this worker
         {
             let mut pending_lock = pending_connections.lock().await;
-            if let Some(senders) = pending_lock.remove(&worker_uid) {
+            if let Some(senders) = pending_lock.remove(&worker_identity) {
                 info!(
-                    "Fulfilling {} pending requests for UID {worker_uid:?}",
+                    "Fulfilling {} pending requests for worker {worker_identity:?}",
                     senders.len(),
                 );
                 for sender in senders {
                     let _ = sender.send(worker_connection.clone());
                 }
             } else {
-                info!("No pending requests found for UID {worker_uid:?}");
+                info!("No pending requests found for worker {worker_identity:?}");
             }
         }
 
         // Start monitoring this worker connection
         let workers_monitor = workers.clone();
-        let worker_uid_monitor = worker_uid.clone();
+        let worker_identity_monitor = worker_identity.clone();
         tokio::spawn(async move {
             worker_connection.monitor_until_disconnect().await;
-            info!("Worker {worker_uid_monitor:?} disconnected, removing from active connections",);
-            workers_monitor.lock().await.remove(&worker_uid_monitor);
+            info!(
+                "Worker {worker_identity_monitor:?} disconnected, removing from active connections",
+            );
+            workers_monitor
+                .lock()
+                .await
+                .remove(&worker_identity_monitor);
         });
 
         Ok(())
@@ -142,15 +152,19 @@ impl WorkerManager {
         uid: UID,
         se_info: Option<String>,
     ) -> Result<WorkerConnection> {
-        match self.get_worker_for_uid(uid.clone()).await {
+        let worker_identity = WorkerIdentity::new(uid.clone(), se_info.clone());
+        match self.get_worker_for_identity(&worker_identity).await {
             Ok(connection) => Ok(connection),
             Err(_) => self.spawn_worker(uid, se_info).await,
         }
     }
 
-    pub async fn get_worker_for_uid(&self, uid: UID) -> Result<WorkerConnection> {
+    pub async fn get_worker_for_identity(
+        &self,
+        identity: &WorkerIdentity,
+    ) -> Result<WorkerConnection> {
         let workers_lock = self.workers.lock().await;
-        if let Some(connection) = workers_lock.get(&uid) {
+        if let Some(connection) = workers_lock.get(identity) {
             if connection.is_healthy().await {
                 return Ok(connection.clone());
             }
@@ -177,67 +191,69 @@ impl WorkerManager {
             ));
         }
 
+        let identity = WorkerIdentity::new(uid.clone(), se_info.clone());
+
         // No existing worker, spawn new one
-        info!("Spawning new worker for UID {uid:?}");
+        info!("Spawning new worker for {identity:?}");
         let (tx, rx) = oneshot::channel();
 
         // Mark connection pending
         {
             let mut pending_lock = self.pending_connections.lock().await;
             pending_lock
-                .entry(uid.clone())
+                .entry(identity.clone())
                 .or_insert_with(Vec::new)
                 .push(tx);
         }
 
         // Spawn the worker
-        WorkerProcess::spawn(uid.clone(), se_info).await?;
+        WorkerProcess::spawn(uid.clone(), se_info.clone()).await?;
 
         match timeout(Duration::from_secs(15), rx).await {
             Ok(Ok(connection)) => {
-                info!("Successfully connected to worker for UID {uid:?}");
+                info!("Successfully connected to worker for {identity:?}");
                 Ok(connection)
             }
             Ok(Err(_)) => {
-                error!("Worker connection channel closed for UID {uid:?}");
+                error!("Worker connection channel closed for {identity:?}");
                 Err(crate::error::Error::Unknown(format!(
-                    "Worker connection channel closed for UID {uid:?}",
+                    "Worker connection channel closed for {identity:?}",
                 )))
             }
             Err(_) => {
                 // Timeout occurred, but check if worker is available anyway
-                info!("Timeout on channel for UID {uid:?}, checking if worker is available",);
+                info!("Timeout on channel for {identity:?}, checking if worker is available",);
 
                 {
                     let workers_lock = self.workers.lock().await;
-                    if let Some(connection) = workers_lock.get(&uid) {
+                    if let Some(connection) = workers_lock.get(&identity) {
                         if connection.is_healthy().await {
-                            info!("Worker for UID {uid:?} is now available after timeout");
+                            info!("Worker for {identity:?} is now available after timeout");
                             return Ok(connection.clone());
                         } else {
-                            info!("Worker for UID {uid:?} found but not healthy");
+                            info!("Worker for {identity:?} found but not healthy");
                         }
                     } else {
-                        info!("No worker found for UID {uid:?} after timeout");
+                        info!("No worker found for {identity:?} after timeout");
                     }
                 }
 
-                error!("Timeout waiting for worker {:?} to connect", uid);
+                error!("Timeout waiting for worker {:?} to connect", identity);
                 // Clean up pending request
                 let mut pending_lock = self.pending_connections.lock().await;
-                if let Some(senders) = pending_lock.get_mut(&uid) {
+                if let Some(senders) = pending_lock.get_mut(&identity) {
                     info!(
-                        "Cleaning up {} pending senders for UID {uid:?}",
+                        "Cleaning up {} pending senders for {identity:?}",
                         senders.len(),
                     );
                     // Remove all pending senders
                     senders.retain(|_| false);
                 } else {
-                    info!("No pending senders to clean up for UID {uid:?}");
+                    info!("No pending senders to clean up for {identity:?}");
                 }
                 Err(crate::error::Error::Unknown(format!(
                     "Timeout waiting for worker {:?} to connect",
-                    uid
+                    identity
                 )))
             }
         }
@@ -263,8 +279,8 @@ impl WorkerManager {
 
     pub async fn shutdown_all(&self) -> Result<()> {
         let workers_lock = self.workers.lock().await;
-        for (uid, connection) in workers_lock.iter() {
-            info!("Shutting down worker for UID {:?}", uid);
+        for (identity, connection) in workers_lock.iter() {
+            info!("Shutting down worker for {:?}", identity);
             let mut connection = connection.clone();
             connection.shutdown().await;
         }

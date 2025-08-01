@@ -10,7 +10,7 @@ use std::{
 use dependency_graph::{DependencyGraph, Step};
 use file_lock::FileLock;
 use pinitd_common::{
-    CONFIG_DIR, ServiceRunState, ServiceStatus, UID, ZYGOTE_READY_FILE,
+    CONFIG_DIR, ServiceRunState, ServiceStatus, UID, WorkerIdentity, ZYGOTE_READY_FILE,
     protocol::{CLICommand, CLIResponse},
     unit_config::ServiceConfig,
 };
@@ -299,11 +299,18 @@ impl ControllerRegistry {
     }
 
     pub async fn service_stop(&mut self, name: String) -> Result<()> {
-        let worker_uid = self
-            .with_service(&name, |service| Ok(service.config().command.uid.clone()))
+        let (uid, se_info) = self
+            .with_service(&name, |service| {
+                let config = service.config();
+                Ok((config.command.uid.clone(), config.se_info.clone()))
+            })
             .await?;
 
-        match self.worker_manager.get_worker_for_uid(worker_uid).await {
+        match self
+            .worker_manager
+            .get_worker_for_identity(&WorkerIdentity::new(uid, se_info))
+            .await
+        {
             Ok(connection) => {
                 connection
                     .write_command(WorkerCommand::KillProcess {

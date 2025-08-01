@@ -29,12 +29,17 @@ async fn handle_worker_event(registry: &ControllerRegistry, event: WorkerEvent) 
         WorkerEvent::WorkerRegistration {
             worker_uid,
             worker_pid,
+            worker_se_info,
         } => {
             // Send CGroupReparentCommand to system worker for this worker process
             if let Err(e) = registry.send_cgroup_reparent_command(worker_pid).await {
-                error!("Failed to reparent worker {worker_uid:?} PID {worker_pid}: {e}");
+                error!(
+                    "Failed to reparent worker {worker_uid:?} (SEInfo {worker_se_info}) PID {worker_pid}: {e}"
+                );
             } else {
-                info!("Successfully requested reparent for worker {worker_uid:?} PID {worker_pid}");
+                info!(
+                    "Successfully requested reparent for worker {worker_uid:?} (SEInfo {worker_se_info}) PID {worker_pid}"
+                );
             }
         }
         WorkerEvent::Heartbeat { .. } => {

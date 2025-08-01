@@ -8,7 +8,7 @@ use crate::{
     worker::protocol::{ServiceState, WorkerState},
     wrapper::daemonize,
 };
-use pinitd_common::{ServiceRunState, UID, WORKER_CONTROLLER_POLL_INTERVAL};
+use pinitd_common::{ServiceRunState, UID, WORKER_CONTROLLER_POLL_INTERVAL, WorkerIdentity};
 use tokio::{
     process::Command,
     select,
@@ -57,12 +57,13 @@ impl ProcessInfo {
 pub struct WorkerProcess;
 
 impl WorkerProcess {
-    pub fn specialize(uid: UID) -> Result<()> {
+    pub fn specialize(uid: UID, se_info: Option<String>) -> Result<()> {
         daemonize(async move {
             info!("Worker started for UID {uid:?}");
 
             let start_time = SystemTime::now();
             let running_processes = Arc::new(Mutex::new(HashMap::<String, ProcessInfo>::new()));
+            let worker_se_info = se_info.unwrap_or_else(|| WorkerIdentity::default_se_info(&uid));
 
             loop {
                 match ControllerConnection::open().await {
@@ -72,6 +73,7 @@ impl WorkerProcess {
                         let identification = WorkerEvent::WorkerRegistration {
                             worker_uid: uid.clone(),
                             worker_pid,
+                            worker_se_info: worker_se_info.clone(),
                         };
                         if let Err(e) = connection
                             .write_response(WorkerMessage::Event(identification))
@@ -223,7 +225,7 @@ impl WorkerProcess {
 
     /// Spawn a remote process to act as a worker for a specific UID
     #[cfg(not(target_os = "android"))]
-    pub async fn spawn(uid: UID, se_info: Option<String>) -> Result<()> {
+    pub async fn spawn(uid: UID, _se_info: Option<String>) -> Result<()> {
         let process_path = std::env::args().next().unwrap();
         let mut cmd = tokio::process::Command::new(process_path);
         cmd.arg("worker");
