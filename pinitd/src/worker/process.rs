@@ -59,7 +59,7 @@ pub struct WorkerProcess;
 impl WorkerProcess {
     pub fn specialize(uid: UID, se_info: Option<String>) -> Result<()> {
         daemonize(async move {
-            info!("Worker started for UID {uid:?}");
+            info!("Worker started for UID {uid:?}, se_info: {se_info:?}");
 
             let start_time = SystemTime::now();
             let running_processes = Arc::new(Mutex::new(HashMap::<String, ProcessInfo>::new()));
@@ -191,7 +191,10 @@ impl WorkerProcess {
 
         let uid_num: usize = identity.uid.clone().into();
 
-        let worker_args = format!("{executable} worker --uid {}", uid_arg);
+        let worker_args = format!(
+            "{executable} worker --uid {uid_arg} --se-info {}",
+            identity.se_info
+        );
 
         let payload = exploit()?.new_launch_payload(
             uid_num,
