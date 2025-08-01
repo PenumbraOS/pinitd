@@ -493,12 +493,12 @@ impl ControllerRegistry {
                 }
             };
 
-            match timeout(Duration::from_secs(30), watch_closure).await {
+            match timeout(Duration::from_secs(60), watch_closure).await {
                 Ok(_) => {
                     info!("Zygote ready file polling completed successfully");
                 }
                 Err(_) => {
-                    warn!("Zygote ready file polling timed out after 30 seconds");
+                    warn!("Zygote ready file polling timed out after 60 seconds");
                 }
             }
         });
