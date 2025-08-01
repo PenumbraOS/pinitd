@@ -570,14 +570,17 @@ impl ControllerRegistry {
         if !post_exploit {
             for config in &service_configs_to_start {
                 info!("Pre-spawning worker for UID {:?}", config.command.uid);
-                let _ = self
+                if let Err(err) = self
                     .worker_manager
                     .get_worker_spawning_if_necessary(
                         config.command.uid.clone(),
                         config.se_info.clone(),
                         config.launch_package.clone(),
                     )
-                    .await?;
+                    .await
+                {
+                    error!("Failed to prestart worker: {err}")
+                }
             }
         }
 
