@@ -393,7 +393,7 @@ impl ControllerRegistry {
         // We are always sending to system, so default se_info is sufficient
         let connection = self
             .worker_manager
-            .get_worker_spawning_if_necessary(UID::System, None, None)
+            .get_worker_spawning_if_necessary(UID::System, None, None, None)
             .await?;
 
         let response = connection
@@ -575,6 +575,7 @@ impl ControllerRegistry {
                     .get_worker_spawning_if_necessary(
                         config.command.uid.clone(),
                         config.se_info.clone(),
+                        config.nice_name.clone(),
                         config.launch_package.clone(),
                     )
                     .await
@@ -728,6 +729,7 @@ impl Registry for ControllerRegistry {
             .get_worker_spawning_if_necessary(
                 config.command.uid,
                 config.se_info,
+                config.nice_name,
                 config.launch_package,
             )
             .await?;

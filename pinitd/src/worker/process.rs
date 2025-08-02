@@ -165,7 +165,11 @@ impl WorkerProcess {
 
     /// Spawn a remote process to act as a worker for a specific UID
     #[cfg(target_os = "android")]
-    pub async fn spawn(identity: &WorkerIdentity, launch_package: Option<String>) -> Result<()> {
+    pub async fn spawn(
+        identity: &WorkerIdentity,
+        nice_name: Option<String>,
+        launch_package: Option<String>,
+    ) -> Result<()> {
         // Controller runs in Shell. Shell worker spawns as child, others via Zygote
         if identity.uid == UID::Shell {
             let process_path = std::env::args().next().unwrap();
@@ -206,7 +210,7 @@ impl WorkerProcess {
             &ExploitKind::Command(format!(
                 "{executable} internal-wrapper --is-zygote \"{worker_args}\""
             )),
-            None,
+            nice_name.as_deref(),
         )?;
 
         payload
@@ -225,7 +229,11 @@ impl WorkerProcess {
 
     /// Spawn a remote process to act as a worker for a specific UID
     #[cfg(not(target_os = "android"))]
-    pub async fn spawn(identity: &WorkerIdentity, _launch_package: Option<String>) -> Result<()> {
+    pub async fn spawn(
+        identity: &WorkerIdentity,
+        nice_name: Option<String>,
+        _launch_package: Option<String>,
+    ) -> Result<()> {
         let process_path = std::env::args().next().unwrap();
         let mut cmd = tokio::process::Command::new(process_path);
         cmd.arg("worker");

@@ -149,12 +149,16 @@ impl WorkerManager {
         &self,
         uid: UID,
         se_info: Option<String>,
+        nice_name: Option<String>,
         launch_package: Option<String>,
     ) -> Result<WorkerConnection> {
         let identity = WorkerIdentity::new(uid, se_info);
         match self.get_worker_for_identity(&identity).await {
             Ok(connection) => Ok(connection),
-            Err(_) => self.spawn_worker(&identity, launch_package).await,
+            Err(_) => {
+                self.spawn_worker(&identity, nice_name, launch_package)
+                    .await
+            }
         }
     }
 
@@ -186,6 +190,7 @@ impl WorkerManager {
     async fn spawn_worker(
         &self,
         identity: &WorkerIdentity,
+        nice_name: Option<String>,
         launch_package: Option<String>,
     ) -> Result<WorkerConnection> {
         if *self.disable_spawns.lock().await {
@@ -207,7 +212,7 @@ impl WorkerManager {
                 .push(tx);
         }
 
-        WorkerProcess::spawn(identity, launch_package).await?;
+        WorkerProcess::spawn(identity, nice_name, launch_package).await?;
 
         match timeout(Duration::from_secs(15), rx).await {
             Ok(Ok(connection)) => {
