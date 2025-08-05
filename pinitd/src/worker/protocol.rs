@@ -68,6 +68,7 @@ pub enum WorkerEvent {
     ProcessSpawned {
         service_name: String,
         pinit_id: Uuid,
+        pid: u32,
     },
     ProcessExited {
         service_name: String,

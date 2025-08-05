@@ -51,11 +51,12 @@ async fn handle_worker_event(registry: &ControllerRegistry, event: WorkerEvent) 
         WorkerEvent::ProcessSpawned {
             service_name,
             pinit_id,
+            pid,
         } => {
-            info!("Process spawned: {service_name} (ID: {pinit_id})");
+            info!("Process spawned: {service_name} (ID: {pinit_id}) with PID {pid}");
 
             registry
-                .update_service_state(service_name, ServiceRunState::Running { pid: None })
+                .update_service_state(service_name, ServiceRunState::Running { pid: Some(pid) })
                 .await?;
         }
         WorkerEvent::ProcessExited {
