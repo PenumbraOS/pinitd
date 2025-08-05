@@ -301,6 +301,7 @@ async fn handle_command(
             let spawn_event: WorkerEvent = WorkerEvent::ProcessSpawned {
                 service_name: service_name.clone(),
                 pinit_id,
+                pid,
             };
             let _ = connection
                 .write_response(WorkerMessage::Event(spawn_event))
