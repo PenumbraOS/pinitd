@@ -29,17 +29,21 @@ jobs:
         with:
           targets: aarch64-linux-android
 
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
         with:
           ndk-version: r28c
+          add-to-path: true
           link-to-sdk: true
 
       - name: Install cargo-ndk
         run: cargo install cargo-ndk
 
       - name: Build Rust binaries
-        run: cargo ndk -t arm64-v8a -p 28 build --release
+        run: cargo ndk -t arm64-v8a build --release
 
       - name: Copy pinitd into APK build location
         run: |
