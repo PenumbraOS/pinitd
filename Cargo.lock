@@ -39,7 +39,7 @@ dependencies = [
 [[package]]
 name = "android_31317_exploit"
 version = "0.1.0"
-source = "git+https://github.com/agg23/android_31317_exploit_rs.git#64a6ca9f399d248ea0a31c793c6df4bcc5377392"
+source = "git+https://github.com/agg23/android_31317_exploit_rs.git#915d6865cb1c9bcdb0aa3914ae2fb6105c788484"
 dependencies = [
  "clap",
  "log",
