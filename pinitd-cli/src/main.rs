@@ -1,4 +1,5 @@
 use std::{
+    cmp::Ordering,
     path::PathBuf,
     process::{self, Command, Stdio},
     time::Duration,
@@ -103,14 +104,14 @@ async fn main() -> Result<()> {
             exit_with_message(&format!("Error: {msg}"));
         }
         CLIResponse::Status(info) => {
-            print_status(&[info]);
+            print_status(vec![info]);
             Ok(())
         }
         CLIResponse::List(list) => {
             if list.is_empty() {
                 println!("No services configured");
             } else {
-                print_status(&list);
+                print_status(list);
             }
             Ok(())
         }
@@ -148,7 +149,22 @@ async fn debug_manual_start() -> Result<()> {
     Ok(())
 }
 
-fn print_status(statuses: &[ServiceStatus]) {
+fn print_status(mut statuses: Vec<ServiceStatus>) {
+    statuses.sort_by(|a, b| {
+        let running_ordering = b.state.ordering().cmp(&a.state.ordering());
+
+        if !running_ordering.is_eq() {
+            return running_ordering;
+        }
+
+        if a.enabled && !b.enabled {
+            return Ordering::Less;
+        } else if b.enabled && !a.enabled {
+            return Ordering::Greater;
+        }
+
+        a.name.cmp(&b.name)
+    });
     println!(
         " {:<41} {:<10} {:<20} {}",
         "NAME", "ENABLED", "STATE", "UID"

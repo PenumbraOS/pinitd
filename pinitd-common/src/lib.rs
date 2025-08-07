@@ -71,6 +71,17 @@ impl std::fmt::Display for ServiceRunState {
     }
 }
 
+impl ServiceRunState {
+    pub fn ordering(&self) -> usize {
+        match self {
+            ServiceRunState::Stopped => 0,
+            ServiceRunState::Stopping => 1,
+            ServiceRunState::Failed { .. } => 2,
+            ServiceRunState::Running { .. } => 3,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ServiceStatus {
     pub name: String,
