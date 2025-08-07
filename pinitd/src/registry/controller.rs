@@ -905,9 +905,12 @@ impl Registry for ControllerRegistry {
     }
 
     async fn service_enable(&self, name: String) -> Result<()> {
-        let services = self.services.lock().await;
-        if !services.contains_key(&name) {
-            return Err(Error::UnknownServiceError(name.clone()));
+        // Make sure to drop lock
+        {
+            let services = self.services.lock().await;
+            if !services.contains_key(&name) {
+                return Err(Error::UnknownServiceError(name.clone()));
+            }
         }
 
         if self.is_enabled(&name).await? {
@@ -917,17 +920,21 @@ impl Registry for ControllerRegistry {
 
         self.create_enabled_file(&name).await?;
 
-        let mut services = self.services.lock().await;
-        if let Some(service) = services.get(&name) {
-            let new_service = Service::new(service.config().clone(), service.state().clone(), true);
-            services.insert(name.clone(), new_service);
+        // Make sure to drop lock
+        {
+            let mut services = self.services.lock().await;
+            if let Some(service) = services.get(&name) {
+                let new_service =
+                    Service::new(service.config().clone(), service.state().clone(), true);
+                services.insert(name.clone(), new_service);
+            }
         }
 
         Ok(())
     }
 
     async fn service_disable(&self, name: String) -> Result<()> {
-        // Check if service exists in registry
+        // Make sure to drop lock
         {
             let services = self.services.lock().await;
             if !services.contains_key(&name) {
@@ -935,21 +942,21 @@ impl Registry for ControllerRegistry {
             }
         }
 
-        // Check if already disabled
         if !self.is_enabled(&name).await? {
             warn!("Attempted to disable already disabled service \"{name}\"");
             return Ok(());
         }
 
-        // Remove enabled file to disable the service
         self.remove_enabled_file(&name).await?;
 
-        // Update in-memory state
-        let mut services = self.services.lock().await;
-        if let Some(service) = services.get(&name) {
-            let new_service =
-                Service::new(service.config().clone(), service.state().clone(), false);
-            services.insert(name.clone(), new_service);
+        // Make sure to drop lock
+        {
+            let mut services = self.services.lock().await;
+            if let Some(service) = services.get(&name) {
+                let new_service =
+                    Service::new(service.config().clone(), service.state().clone(), false);
+                services.insert(name.clone(), new_service);
+            }
         }
 
         Ok(())
