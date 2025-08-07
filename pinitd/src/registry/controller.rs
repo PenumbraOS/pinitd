@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     hash::RandomState,
     io::ErrorKind,
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
@@ -10,7 +10,8 @@ use std::{
 use dependency_graph::{DependencyGraph, Step};
 use file_lock::FileLock;
 use pinitd_common::{
-    CONFIG_DIR, ServiceRunState, ServiceStatus, UID, WorkerIdentity, ZYGOTE_READY_FILE,
+    CONFIG_DIR, ENABLED_DIR, ServiceRunState, ServiceStatus, UID, WorkerIdentity,
+    ZYGOTE_READY_FILE,
     protocol::{CLICommand, CLIResponse},
     unit_config::ServiceConfig,
 };
@@ -26,7 +27,6 @@ use crate::{
     controller::{pms::ProcessManagementService, worker_manager::WorkerManager},
     error::{Error, Result},
     file::acquire_controller_lock,
-    state::StoredState,
     types::Service,
     unit_parsing::ParsableServiceConfig,
     worker::protocol::{WorkerCommand, WorkerEvent, WorkerResponse},
@@ -39,7 +39,6 @@ pub struct ControllerRegistry {
     controller_lock: Arc<Mutex<Option<FileLock>>>,
     pms: Option<Box<ProcessManagementService>>,
     services: Arc<Mutex<HashMap<String, Service>>>,
-    stored_state: Arc<Mutex<StoredState>>,
     worker_manager: Arc<WorkerManager>,
     service_spawning_allowed: Arc<Mutex<bool>>,
     pending_autostart_services: Arc<Mutex<Option<Vec<String>>>>,
@@ -50,9 +49,6 @@ impl ControllerRegistry {
         worker_event_tx: mpsc::Sender<WorkerEvent>,
         controller_lock: Arc<Mutex<Option<FileLock>>>,
     ) -> Result<Self> {
-        let state = StoredState::load().await?;
-        info!("Loaded enabled state for: {:?}", state.enabled_services);
-
         info!("Loading service configurations from {}", CONFIG_DIR);
 
         let worker_manager = Arc::new(WorkerManager::new(worker_event_tx));
@@ -64,7 +60,6 @@ impl ControllerRegistry {
             controller_lock,
             pms: None,
             services: Arc::new(Mutex::new(HashMap::new())),
-            stored_state: Arc::new(Mutex::new(state)),
             worker_manager,
             service_spawning_allowed: Arc::new(Mutex::new(false)),
             pending_autostart_services: Arc::new(Mutex::new(None)),
@@ -97,15 +92,95 @@ impl ControllerRegistry {
         func(service)
     }
 
+    async fn unit_path_for_service(&self, name: &str) -> Result<PathBuf> {
+        self.with_service(name, |service| Ok(service.config().unit_file_path.clone()))
+            .await
+    }
+
     async fn is_enabled(&self, name: &str) -> Result<bool> {
-        let stored_state = self.stored_state.lock().await;
-        Ok(stored_state.enabled(&name.to_string()))
+        // Use real service path to look up enabled file
+        let unit_file_path = {
+            let services = self.services.lock().await;
+            match services.get(name) {
+                Some(service) => service.config().unit_file_path.clone(),
+                None => return Ok(false),
+            }
+        };
+
+        if let Some(filename) = unit_file_path.file_name() {
+            let enabled_path = PathBuf::from(ENABLED_DIR).join(filename);
+            Ok(enabled_path.exists())
+        } else {
+            Ok(false)
+        }
+    }
+
+    async fn create_enabled_file(&self, name: &str) -> Result<()> {
+        let unit_file_path = match self.unit_path_for_service(name).await {
+            Ok(path) => path,
+            Err(err) => return Err(err),
+        };
+
+        if !unit_file_path.exists() {
+            return Err(Error::Unknown(format!(
+                "Service file for \"{name}\" does not exist at {unit_file_path:?}",
+            )));
+        }
+
+        // Create empty file with the same name as the unit file
+        if let Some(filename) = unit_file_path.file_name() {
+            let enabled_path = PathBuf::from(ENABLED_DIR).join(filename);
+
+            if !enabled_path.exists() {
+                fs::write(&enabled_path, b"").await?;
+                info!("Created enabled file for service \"{name}\" -> {filename:?}");
+            }
+        } else {
+            return Err(Error::Unknown(format!(
+                "Invalid unit file path: {unit_file_path:?}"
+            )));
+        }
+
+        Ok(())
+    }
+
+    async fn remove_enabled_file(&self, name: &str) -> Result<()> {
+        let unit_file_path = match self.unit_path_for_service(name).await {
+            Ok(path) => path,
+            Err(err) => return Err(err),
+        };
+
+        if let Some(filename) = unit_file_path.file_name() {
+            let enabled_path = PathBuf::from(ENABLED_DIR).join(filename);
+
+            if enabled_path.exists() {
+                fs::remove_file(&enabled_path).await?;
+                info!("Removed enabled file for service \"{name}\"");
+            }
+        }
+
+        Ok(())
     }
 
     async fn insert_service(&self, service: Service) -> Result<()> {
         let mut services = self.services.lock().await;
         services.insert(service.config().name.clone(), service);
         Ok(())
+    }
+
+    async fn verify_enabled_file(&self, enabled_file_path: &Path) -> Option<String> {
+        if let Some(filename) = enabled_file_path.file_name() {
+            // The enabled file should have the same name as a unit file in CONFIG_DIR
+            let unit_file_path = PathBuf::from(CONFIG_DIR).join(filename);
+
+            for service in self.services.lock().await.values() {
+                if service.config().unit_file_path == unit_file_path {
+                    return Some(service.config().name.clone());
+                }
+            }
+        }
+
+        None
     }
 
     pub async fn load_from_disk(&mut self) -> Result<()> {
@@ -120,7 +195,7 @@ impl ControllerRegistry {
                 match self.load_unit_config(&path).await {
                     Ok(config) => {
                         let name = config.name.clone();
-                        match self.insert_unit_with_current_state(config).await {
+                        match self.insert_unit(config, false).await {
                             Ok(_) => {
                                 load_count += 1;
                             }
@@ -138,9 +213,61 @@ impl ControllerRegistry {
         }
         // TODO: Delete registry entries that aren't present
 
+        let enabled_services = self.load_enabled_service_names().await?;
+        info!("Found {} enabled services", enabled_services.len());
+
+        for service in enabled_services {
+            let _ = self
+                .with_service_mut(&service, |service| {
+                    service.set_enabled(true);
+                    Ok(())
+                })
+                .await;
+        }
+
         info!("Finished loading configurations. {load_count} services loaded.");
 
+        // Clean up any orphaned enabled files in the enabled directory
+        if let Err(e) = self.clean_orphaned_symlinks().await {
+            warn!("Failed to clean orphaned enabled files: {}", e);
+        }
+
         Ok(())
+    }
+
+    // Android permissions won't let us create symlinks, so we use blank files instead
+    async fn load_enabled_service_names(&self) -> Result<HashSet<String>> {
+        let mut enabled_services = HashSet::new();
+
+        if !Path::new(ENABLED_DIR).exists() {
+            info!("Enabled directory {ENABLED_DIR} does not exist, creating it",);
+            fs::create_dir_all(ENABLED_DIR).await?;
+            return Ok(enabled_services);
+        }
+
+        let mut directory = fs::read_dir(ENABLED_DIR).await?;
+
+        while let Some(entry) = directory.next_entry().await? {
+            let path = entry.path();
+
+            if path.is_file() && path.extension().map_or(false, |ext| ext == "unit") {
+                // Check if it's a regular file (not a symlink)
+                if let Ok(metadata) = fs::symlink_metadata(&path).await {
+                    if metadata.file_type().is_file() {
+                        if let Some(service_name) = self.verify_enabled_file(&path).await {
+                            enabled_services.insert(service_name.clone());
+                            info!("Found enabled service: \"{service_name}\" (via {path:?})");
+                        } else {
+                            warn!("Invalid enabled file: {path:?}");
+                        }
+                    } else {
+                        warn!("Found non-regular file in enabled directory: {:?}", path);
+                    }
+                }
+            }
+        }
+
+        Ok(enabled_services)
     }
 
     pub async fn set_pms(&mut self, pms: ProcessManagementService) {
@@ -260,9 +387,41 @@ impl ControllerRegistry {
         ServiceConfig::parse(path).await
     }
 
-    async fn insert_unit_with_current_state(&mut self, config: ServiceConfig) -> Result<()> {
-        let enabled = self.is_enabled(&config.name).await?;
-        self.insert_unit(config, enabled).await
+    async fn clean_orphaned_symlinks(&self) -> Result<()> {
+        if !Path::new(ENABLED_DIR).exists() {
+            return Ok(());
+        }
+
+        let mut directory = fs::read_dir(ENABLED_DIR).await?;
+
+        while let Some(entry) = directory.next_entry().await? {
+            let path = entry.path();
+
+            if path.is_file() && path.extension().map_or(false, |ext| ext == "unit") {
+                // Check if it's a regular file (not a symlink)
+                if let Ok(metadata) = fs::symlink_metadata(&path).await {
+                    if metadata.file_type().is_file() {
+                        let should_remove = match self.verify_enabled_file(&path).await {
+                            Some(service_name) => {
+                                // Check if this service is actually registered in memory
+                                let services = self.services.lock().await;
+                                !services.contains_key(&service_name)
+                            }
+                            None => true, // Invalid enabled file, remove it
+                        };
+
+                        if should_remove {
+                            warn!("Removing orphaned/invalid enabled file: {path:?}");
+                            if let Err(e) = fs::remove_file(&path).await {
+                                warn!("Failed to remove orphaned enabled file: {e}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     pub async fn service_start(&mut self, name: String, wait_for_start: bool) -> Result<bool> {
@@ -746,79 +905,51 @@ impl Registry for ControllerRegistry {
     }
 
     async fn service_enable(&self, name: String) -> Result<()> {
-        let should_save = {
-            let services = self.services.lock().await;
-            if let Some(service) = services.get(&name) {
-                if service.enabled() {
-                    warn!("Attempted to enable already enabled service \"{name}\"");
-                    false
-                } else {
-                    true
-                }
-            } else {
-                return Err(Error::UnknownServiceError(name));
-            }
-        };
+        let services = self.services.lock().await;
+        if !services.contains_key(&name) {
+            return Err(Error::UnknownServiceError(name.clone()));
+        }
 
-        if should_save {
-            let mut services = self.services.lock().await;
-            if let Some(service) = services.get(&name) {
-                let new_service =
-                    Service::new(service.config().clone(), service.state().clone(), true);
-                services.insert(name.clone(), new_service);
-            }
-            drop(services);
+        if self.is_enabled(&name).await? {
+            warn!("Attempted to enable already enabled service \"{name}\"");
+            return Ok(());
+        }
 
-            // Update stored state
-            let mut stored_state = self.stored_state.lock().await;
-            if !stored_state.enabled_services.iter().any(|s| *s == name) {
-                stored_state.enabled_services.push(name);
-            }
-            let state = stored_state.clone();
-            drop(stored_state);
-            state.save().await?;
+        self.create_enabled_file(&name).await?;
+
+        let mut services = self.services.lock().await;
+        if let Some(service) = services.get(&name) {
+            let new_service = Service::new(service.config().clone(), service.state().clone(), true);
+            services.insert(name.clone(), new_service);
         }
 
         Ok(())
     }
 
     async fn service_disable(&self, name: String) -> Result<()> {
-        let should_save = {
+        // Check if service exists in registry
+        {
             let services = self.services.lock().await;
-            if let Some(service) = services.get(&name) {
-                if !service.enabled() {
-                    warn!("Attempted to disable already disabled service \"{name}\"");
-                    false
-                } else {
-                    true
-                }
-            } else {
-                return Err(Error::UnknownServiceError(name));
+            if !services.contains_key(&name) {
+                return Err(Error::UnknownServiceError(name.clone()));
             }
-        };
+        }
 
-        if should_save {
-            // Update the service to be disabled
-            let mut services = self.services.lock().await;
-            if let Some(service) = services.get(&name) {
-                let new_service =
-                    Service::new(service.config().clone(), service.state().clone(), false);
-                services.insert(name.clone(), new_service);
-            }
-            drop(services);
+        // Check if already disabled
+        if !self.is_enabled(&name).await? {
+            warn!("Attempted to disable already disabled service \"{name}\"");
+            return Ok(());
+        }
 
-            // Update stored state
-            let mut stored_state = self.stored_state.lock().await;
-            if let Some(i) = stored_state
-                .enabled_services
-                .iter()
-                .position(|s| *s == name)
-            {
-                stored_state.enabled_services.swap_remove(i);
-            }
-            let state = stored_state.clone();
-            drop(stored_state);
-            state.save().await?;
+        // Remove enabled file to disable the service
+        self.remove_enabled_file(&name).await?;
+
+        // Update in-memory state
+        let mut services = self.services.lock().await;
+        if let Some(service) = services.get(&name) {
+            let new_service =
+                Service::new(service.config().clone(), service.state().clone(), false);
+            services.insert(name.clone(), new_service);
         }
 
         Ok(())

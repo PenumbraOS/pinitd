@@ -25,7 +25,6 @@ mod file;
 #[cfg(not(target_os = "android"))]
 mod log;
 mod registry;
-mod state;
 mod types;
 mod unit_parsing;
 mod worker;

@@ -25,6 +25,11 @@ pub const CONFIG_DIR: &str = "/sdcard/penumbra/etc/pinitd/system/";
 pub const CONFIG_DIR: &str = "test_data/jailbreak_units/";
 
 #[cfg(target_os = "android")]
+pub const ENABLED_DIR: &str = "/sdcard/penumbra/etc/pinitd/system/enabled/";
+#[cfg(not(target_os = "android"))]
+pub const ENABLED_DIR: &str = "test_data/jailbreak_units/enabled/";
+
+#[cfg(target_os = "android")]
 pub const STATE_FILE: &str = "/sdcard/penumbra/etc/pinitd/pinitd.state";
 #[cfg(not(target_os = "android"))]
 pub const STATE_FILE: &str = "test_data/pinitd/pinitd.state";
@@ -77,6 +82,7 @@ pub struct ServiceStatus {
 
 pub fn create_core_directories() {
     let _ = create_dir_all(CONFIG_DIR);
+    let _ = create_dir_all(ENABLED_DIR);
 
     if let Some(parent) = Path::new(STATE_FILE).parent() {
         let _ = create_dir_all(parent);

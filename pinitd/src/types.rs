@@ -49,6 +49,10 @@ impl Service {
         self.inner.enabled
     }
 
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.inner.enabled = enabled;
+    }
+
     pub fn state(&self) -> &ServiceRunState {
         &self.inner.state
     }
