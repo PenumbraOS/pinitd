@@ -7,6 +7,7 @@ import android.os.ServiceManager
 import android.util.Log
 import android.provider.Settings.Global.NAME
 import android.provider.Settings.NameValueTable.VALUE
+import com.penumbraos.pinitd.util.EXEMPTIONS_SETTING_URI
 
 private const val TAG = "pinitd-SettingWriter"
 
@@ -39,7 +40,8 @@ class SettingWriter {
                     contentValues.put(NAME, "hidden_api_blacklist_exemptions")
                     contentValues.put(VALUE, payload)
 
-                    contentProvider.provider.insert(packageName, EXEMPTIONS_SETTING_URI, contentValues)
+                    contentProvider.provider.insert(packageName,
+                        EXEMPTIONS_SETTING_URI, contentValues)
                     Log.w(TAG, "Successfully issued insert command")
                 } else {
                     contentProvider.provider.delete(packageName, EXEMPTIONS_SETTING_URI, null, null)

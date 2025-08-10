@@ -1,13 +1,14 @@
-package com.penumbraos.pinitd
+package com.penumbraos.pinitd.util
 
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 import android.util.Log
+import com.penumbraos.pinitd.util.Logcat
+import com.penumbraos.pinitd.SHARED_TAG
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.BufferedReader
 import java.io.InputStreamReader

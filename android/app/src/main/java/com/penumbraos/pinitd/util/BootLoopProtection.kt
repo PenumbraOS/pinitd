@@ -1,13 +1,14 @@
-package com.penumbraos.pinitd
+package com.penumbraos.pinitd.util
 
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
 import androidx.core.content.edit
+import com.penumbraos.pinitd.SHARED_TAG
 import java.io.File
 import java.io.FileInputStream
-import java.lang.Thread.sleep
+import java.util.Date
 
 private const val KEY_FAILURE_COUNT = "failure_count"
 private const val KEY_LAST_ATTEMPT_TIME = "last_attempt_time"
@@ -27,17 +28,17 @@ class BootLoopProtection(context: Context) {
         val lastAttemptTime = prefs.getLong(KEY_LAST_ATTEMPT_TIME, 0)
         val launchDisabled = prefs.getBoolean(KEY_LAUNCH_DISABLED, false)
         val manualOverride = prefs.getBoolean(KEY_MANUAL_OVERRIDE, false)
-        
+
         val currentTime = System.currentTimeMillis()
-        
+
         Log.i(SHARED_TAG, "Boot protection check: failures=$failureCount, launchDisabled=$launchDisabled, override=$manualOverride")
-        
+
         if (manualOverride) {
             Log.i(SHARED_TAG, "Manual override enabled, allowing launch")
             clearManualOverride()
             return true
         }
-        
+
         if (launchDisabled) {
             if (currentTime - lastAttemptTime > LAUNCH_DISABLED_TIMEOUT_S * 1000) {
                 Log.i(SHARED_TAG, "Launch disabled timeout expired, re-enabling")
@@ -50,16 +51,16 @@ class BootLoopProtection(context: Context) {
         }
 
         // Delay as SDCard might not be immediately mounted
-        sleep(5000)
+        Thread.sleep(5000)
 
         // First, always signal zygote ready in case pinitd is running
         // This must happen before checking the lock file due to zygote restart timing
         Log.i(SHARED_TAG, "Signaling zygote ready first to handle race condition and delaying")
         createZygoteReadyFile()
-        
+
         // Give pinitd a moment to process the signal and reacquire the lock if it's running
-        sleep(5000)
-        
+        Thread.sleep(5000)
+
         Log.i(SHARED_TAG, "Checking for running pinitd controller")
 
         try {
@@ -83,7 +84,7 @@ class BootLoopProtection(context: Context) {
             return true
         }
     }
-    
+
     fun recordAttempt() {
         val failureCount = prefs.getInt(KEY_FAILURE_COUNT, 0) + 1
         val currentTime = System.currentTimeMillis()
@@ -98,10 +99,10 @@ class BootLoopProtection(context: Context) {
                 putBoolean(KEY_LAUNCH_DISABLED, true)
             }
         }
-        
+
         Log.i(SHARED_TAG, "Recorded boot attempt at $currentTime")
     }
-    
+
     fun recordSuccess() {
         val currentTime = System.currentTimeMillis()
         prefs.edit {
@@ -109,7 +110,7 @@ class BootLoopProtection(context: Context) {
             putLong(KEY_LAST_SUCCESS_TIME, currentTime)
             putBoolean(KEY_LAUNCH_DISABLED, false)
         }
-        
+
         Log.i(SHARED_TAG, "Recorded successful launch, reset failure count")
     }
 
@@ -117,30 +118,30 @@ class BootLoopProtection(context: Context) {
         prefs.edit {
             putBoolean(KEY_MANUAL_OVERRIDE, true)
         }
-        
+
         Log.i(SHARED_TAG, "Manual override enabled")
     }
-    
+
     private fun clearManualOverride() {
         prefs.edit {
             putBoolean(KEY_MANUAL_OVERRIDE, false)
         }
     }
-    
+
     private fun enableLaunch() {
         prefs.edit {
             putBoolean(KEY_LAUNCH_DISABLED, false)
             putInt(KEY_FAILURE_COUNT, 0)
         }
     }
-    
+
     private fun createZygoteReadyFile() {
         try {
             val zygoteReadyFile = File("/sdcard/penumbra/etc/pinitd/zygote_ready")
             val parentDir = zygoteReadyFile.parentFile
 
             Log.w(SHARED_TAG, "Creating zygote ready file at ${zygoteReadyFile.absolutePath}")
-            
+
             // Ensure parent directory exists
             if (parentDir != null && !parentDir.exists()) {
                 if (parentDir.mkdirs()) {
@@ -150,7 +151,7 @@ class BootLoopProtection(context: Context) {
                     return
                 }
             }
-            
+
             // Delete any existing file first
             if (zygoteReadyFile.exists()) {
                 zygoteReadyFile.delete()
@@ -174,17 +175,17 @@ class BootLoopProtection(context: Context) {
         val lastSuccessTime = prefs.getLong(KEY_LAST_SUCCESS_TIME, 0)
         val launchDisabled = prefs.getBoolean(KEY_LAUNCH_DISABLED, false)
         val manualOverride = prefs.getBoolean(KEY_MANUAL_OVERRIDE, false)
-        
+
         return buildString {
             appendLine("Boot Protection Status:")
             appendLine("  Failure Count: $failureCount/$MAX_FAILURES")
             appendLine("  Launch Status: ${if (launchDisabled) "DISABLED" else "ENABLED"}")
             appendLine("  Manual Override: ${if (manualOverride) "ENABLED" else "DISABLED"}")
-            appendLine("  Last Attempt: ${if (lastAttemptTime > 0) java.util.Date(lastAttemptTime) else "Never"}")
-            appendLine("  Last Success: ${if (lastSuccessTime > 0) java.util.Date(lastSuccessTime) else "Never"}")
+            appendLine("  Last Attempt: ${if (lastAttemptTime > 0) Date(lastAttemptTime) else "Never"}")
+            appendLine("  Last Success: ${if (lastSuccessTime > 0) Date(lastSuccessTime) else "Never"}")
         }
     }
-    
+
     fun reset() {
         prefs.edit { clear() }
         Log.i(SHARED_TAG, "Boot protection reset")

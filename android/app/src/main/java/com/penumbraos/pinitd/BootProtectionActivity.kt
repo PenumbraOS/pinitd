@@ -3,6 +3,7 @@ package com.penumbraos.pinitd
 import android.app.Activity
 import android.os.Bundle
 import android.util.Log
+import com.penumbraos.pinitd.util.BootLoopProtection
 
 /**
  * Activity for ADB control of pinitd boot protection.
