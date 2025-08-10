@@ -124,7 +124,7 @@ impl WorkerConnection {
     }
 
     pub async fn write_command(&self, command: WorkerCommand) -> Result<WorkerResponse> {
-        match timeout(Duration::from_millis(200), async move {
+        match timeout(Duration::from_secs(10), async move {
             info!("Sending worker command");
             let mut write = self.connection.write.lock().await;
             command.write(&mut *write).await?;

@@ -82,7 +82,7 @@ async fn main() -> Result<()> {
         Err(_) => exit_with_message("Cannot find pinitd. Is it running?"),
     };
 
-    let response = match timeout(Duration::from_secs(1), async move {
+    let response = match timeout(Duration::from_secs(10), async move {
         initd_command.write(&mut stream).await?;
         // We don't need to write further
         stream.shutdown().await?;

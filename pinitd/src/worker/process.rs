@@ -353,18 +353,33 @@ async fn handle_command(
             });
         }
         WorkerCommand::KillProcess { service_name } => {
-            info!("Killing process for service '{}'", service_name);
+            info!("Killing process for service \"{}\"", service_name);
 
-            if let Some(process_info) = running_processes.lock().await.remove(&service_name) {
+            if let Some(process_info) = running_processes.lock().await.get(&service_name) {
                 // Kill the process using the PID
+                // Synchronous kill (not tokio)
                 use std::process::Command;
                 let _ = Command::new("kill")
                     .args(["-TERM", &process_info.pid.to_string()])
                     .output();
+
+                // Give process 1s to die, then force kill
+                sleep(Duration::from_secs(1)).await;
+
+                // TODO: This is naive. We should actually check if the process is alive
+                let _ = Command::new("kill")
+                    .args(["-9", &process_info.pid.to_string()])
+                    .output();
             } else {
                 // Process might not be in our tracking (if spawned via different method)
-                warn!("Process '{}' not found in running processes", service_name);
+                warn!(
+                    "Process \"{}\" not found in running processes",
+                    service_name
+                );
             }
+
+            // No matter what, remove running process (and do it separately from the existing lock)
+            running_processes.lock().await.remove(&service_name);
         }
         WorkerCommand::Status => {
             // Return status of running processes
