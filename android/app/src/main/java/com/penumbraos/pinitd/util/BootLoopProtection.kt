@@ -22,6 +22,8 @@ private const val LAUNCH_DISABLED_TIMEOUT_S = 10 * 60
 class BootLoopProtection(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("pinitd_boot_protection", Context.MODE_PRIVATE)
 
+    private val player: TonePlayer = TonePlayer()
+
     @SuppressLint("SdCardPath")
     fun shouldAttemptLaunch(): Boolean {
         val failureCount = prefs.getInt(KEY_FAILURE_COUNT, 0)
@@ -112,6 +114,24 @@ class BootLoopProtection(context: Context) {
         }
 
         Log.i(SHARED_TAG, "Recorded successful launch, reset failure count")
+
+        // Play Macintosh LC startup sound
+        player.playJingle(
+            listOf(
+                TonePlayer.SoundEvent(
+                    doubleArrayOf(
+                        349.23, 523.25
+                    ),
+                    durationMs = 800,
+                    attackDurationMs = 50,
+                    releaseDurationMs = 700,
+                    waveform = TonePlayer.Waveform.SQUARE,
+                    // Slight overtones
+                    harmonics = listOf(2 to 0.3, 3 to 0.15),
+                    detuneHz = 0.5
+                )
+            ),
+        )
     }
 
     fun enableManualOverride() {
