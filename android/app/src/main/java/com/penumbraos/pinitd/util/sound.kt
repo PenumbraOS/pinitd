@@ -8,9 +8,9 @@ fun playBootChime(player: TonePlayer) {
                 doubleArrayOf(
                     349.23, 523.25
                 ),
-                durationMs = 800,
+                durationMs = 1200,
                 attackDurationMs = 50,
-                releaseDurationMs = 700,
+                releaseDurationMs = 1000,
                 waveform = TonePlayer.Waveform.SQUARE,
                 // Slight overtones
                 harmonics = listOf(2 to 0.3, 3 to 0.15),
