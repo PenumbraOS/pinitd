@@ -9,6 +9,7 @@ import com.penumbraos.pinitd.util.Logcat
 import com.penumbraos.pinitd.SHARED_TAG
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -28,17 +29,29 @@ fun launchWithBootProtection(context: Context) {
 
     val protection = BootLoopProtection(context)
     protection.recordAttempt()
+    val launchStatus = protection.shouldAttemptLaunch()
 
-    if (protection.shouldAttemptLaunch()) {
+    if (launchStatus == BootProtectionStatus.REQUIRES_BOOT) {
         Log.w(SHARED_TAG, "Boot protection allows launch, proceeding")
 
         val scope = CoroutineScope(Dispatchers.IO)
         scope.launch {
             launchPinitd(scope, context, protection)
+
+            // TODO: Kill process after delay (to keep `ps` clean)
+            Thread.sleep(200)
+
+            if (!protection.checkForPinitd()) {
+                Log.e(SHARED_TAG, "pinitd failed to start. Vulnerability failed")
+                protection.playDeathChime()
+
+                forceClearVulnerability(context)
+            }
         }
-    } else {
+    } else if (launchStatus == BootProtectionStatus.DISABLED_BOOT) {
         Log.w(SHARED_TAG, "Boot protection blocked launch")
         Log.i(SHARED_TAG, protection.getStatus())
+        protection.playDeathChime()
     }
 }
 
@@ -75,12 +88,11 @@ suspend fun launchPinitd(scope: CoroutineScope, context: Context, protection: Bo
             Log.w(SHARED_TAG, "Didn't receive settings launch log. Sending exemptions clear anyway")
         }
 
-        context.contentResolver.delete(EXEMPTIONS_SETTING_URI, null, null)
+        scope.launch {
+            forceClearVulnerability(context)
+        }
 
         Log.w(SHARED_TAG, "Trampoline complete")
-
-        // TODO: Kill process after delay (to keep `ps` clean)
-        Thread.sleep(500)
     } catch (e: Exception) {
         // Failure already recorded
         Log.e(SHARED_TAG, "Exploit error: ${e.message}")
@@ -98,5 +110,12 @@ fun startApp(name: String, context: Context, intent: Intent?) {
         }
     } catch (e: Exception) {
         Log.e(SHARED_TAG, "Zygote trigger app launch error: ${e.message}")
+    }
+}
+
+suspend fun forceClearVulnerability(context: Context) {
+    (0..10).forEach { _ ->
+        context.contentResolver.delete(EXEMPTIONS_SETTING_URI, null, null)
+        delay(200)
     }
 }

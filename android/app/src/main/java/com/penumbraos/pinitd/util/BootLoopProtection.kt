@@ -19,13 +19,19 @@ private const val KEY_MANUAL_OVERRIDE = "manual_override"
 private const val MAX_FAILURES = 5
 private const val LAUNCH_DISABLED_TIMEOUT_S = 10 * 60
 
+enum class BootProtectionStatus {
+    REQUIRES_BOOT,
+    DISABLED_BOOT,
+    ALREADY_BOOTED
+}
+
 class BootLoopProtection(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("pinitd_boot_protection", Context.MODE_PRIVATE)
 
     private val player: TonePlayer = TonePlayer()
 
     @SuppressLint("SdCardPath")
-    fun shouldAttemptLaunch(): Boolean {
+    fun shouldAttemptLaunch(): BootProtectionStatus {
         val failureCount = prefs.getInt(KEY_FAILURE_COUNT, 0)
         val lastAttemptTime = prefs.getLong(KEY_LAST_ATTEMPT_TIME, 0)
         val launchDisabled = prefs.getBoolean(KEY_LAUNCH_DISABLED, false)
@@ -38,17 +44,17 @@ class BootLoopProtection(context: Context) {
         if (manualOverride) {
             Log.i(SHARED_TAG, "Manual override enabled, allowing launch")
             clearManualOverride()
-            return true
+            return BootProtectionStatus.REQUIRES_BOOT
         }
 
         if (launchDisabled) {
             if (currentTime - lastAttemptTime > LAUNCH_DISABLED_TIMEOUT_S * 1000) {
                 Log.i(SHARED_TAG, "Launch disabled timeout expired, re-enabling")
                 enableLaunch()
-                return true
+                return BootProtectionStatus.REQUIRES_BOOT
             } else {
                 Log.w(SHARED_TAG, "Launch disabled, blocking launch")
-                return false
+                return BootProtectionStatus.DISABLED_BOOT
             }
         }
 
@@ -63,27 +69,12 @@ class BootLoopProtection(context: Context) {
         // Give pinitd a moment to process the signal and reacquire the lock if it's running
         Thread.sleep(5000)
 
-        Log.i(SHARED_TAG, "Checking for running pinitd controller")
-
-        try {
-            val controllerLockFile = File("/sdcard/penumbra/etc/pinitd/pinitd.lock")
-            val inputStream = FileInputStream(controllerLockFile)
-            val lock = inputStream.channel.tryLock(0, Long.MAX_VALUE, true)
-
-            if (lock != null) {
-                Log.i(SHARED_TAG, "Controller lock file is not locked. pinitd is not running. Launch is required")
-                lock.close()
-                return true
-            } else {
-                Log.i(SHARED_TAG, "Controller lock file is locked. pinitd is running and has processed zygote ready. Preventing double launch")
-                recordSuccess()
-                Log.w(SHARED_TAG, "pinitd full startup successful")
-                return false
-            }
-        } catch (e: Exception) {
-            Log.e(SHARED_TAG, "Failed to test controller lock file: ${e.message}")
-            e.printStackTrace()
-            return true
+        if (checkForPinitd()) {
+            recordSuccess()
+            Log.w(SHARED_TAG, "pinitd full startup successful")
+            return BootProtectionStatus.ALREADY_BOOTED
+        } else {
+            return BootProtectionStatus.REQUIRES_BOOT
         }
     }
 
@@ -115,23 +106,11 @@ class BootLoopProtection(context: Context) {
 
         Log.i(SHARED_TAG, "Recorded successful launch, reset failure count")
 
-        // Play Macintosh LC startup sound
-        player.playJingle(
-            listOf(
-                TonePlayer.SoundEvent(
-                    doubleArrayOf(
-                        349.23, 523.25
-                    ),
-                    durationMs = 800,
-                    attackDurationMs = 50,
-                    releaseDurationMs = 700,
-                    waveform = TonePlayer.Waveform.SQUARE,
-                    // Slight overtones
-                    harmonics = listOf(2 to 0.3, 3 to 0.15),
-                    detuneHz = 0.5
-                )
-            ),
-        )
+        playBootChime(player)
+    }
+
+    fun playDeathChime() {
+        playDeathChime(player)
     }
 
     fun enableManualOverride() {
@@ -140,6 +119,30 @@ class BootLoopProtection(context: Context) {
         }
 
         Log.i(SHARED_TAG, "Manual override enabled")
+    }
+
+    @SuppressLint("SdCardPath")
+    fun checkForPinitd(): Boolean {
+        Log.i(SHARED_TAG, "Checking for running pinitd controller")
+
+        try {
+            val controllerLockFile = File("/sdcard/penumbra/etc/pinitd/pinitd.lock")
+            val inputStream = FileInputStream(controllerLockFile)
+            val lock = inputStream.channel.tryLock(0, Long.MAX_VALUE, true)
+
+            if (lock != null) {
+                Log.i(SHARED_TAG, "Controller lock file is not locked. pinitd is not running")
+                lock.close()
+                return false
+            } else {
+                Log.i(SHARED_TAG, "Controller lock file is locked. pinitd is running")
+                return true
+            }
+        } catch (e: Exception) {
+            Log.e(SHARED_TAG, "Failed to test controller lock file: ${e.message}")
+            e.printStackTrace()
+            return false
+        }
     }
 
     private fun clearManualOverride() {

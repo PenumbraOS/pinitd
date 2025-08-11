@@ -20,7 +20,11 @@ class TonePlayer {
         val releaseDurationMs: Int = 200,
         val waveform: Waveform = Waveform.SINE,
         val harmonics: List<Pair<Int, Double>> = emptyList(),
-        val detuneHz: Double = 0.0
+        val detuneHz: Double = 0.0,
+        /**
+         * Can be negative for overlap
+         */
+        val offsetMs: Int = 0
     )
 
     enum class Waveform {
@@ -39,18 +43,37 @@ class TonePlayer {
 
     var currentTrack: AudioTrack? = null
 
-    fun playJingle(
-        events: List<SoundEvent>,
-    ) {
-        val buffer = mutableListOf<Short>()
+    fun playJingle(events: List<SoundEvent>) {
+        if (events.isEmpty()) return
+
+        // Calculate total duration considering offsets
+        var currentTimeMs = 0
+        var maxEndMs = 0
+
+        // startSample, event
+        val scheduledEvents = mutableListOf<Pair<Int, SoundEvent>>()
 
         for (event in events) {
+            val startMs = currentTimeMs + event.offsetMs
+            val endMs = startMs + event.durationMs
+
+            val startSample = (startMs / 1000.0 * SAMPLE_RATE).toInt().coerceAtLeast(0)
+            scheduledEvents.add(startSample to event)
+
+            if (endMs > maxEndMs) maxEndMs = endMs
+            currentTimeMs = endMs
+        }
+
+        val totalSamples = (maxEndMs / 1000.0 * SAMPLE_RATE).toInt().coerceAtLeast(1)
+        val mixBuffer = DoubleArray(totalSamples)
+
+        for ((startSample, event) in scheduledEvents) {
             val samples = (event.durationMs / 1000.0 * SAMPLE_RATE).toInt()
             val attackSamples = (event.attackDurationMs / 1000.0 * SAMPLE_RATE).toInt()
             val releaseSamples = (event.releaseDurationMs / 1000.0 * SAMPLE_RATE).toInt()
 
             require(event.attackDurationMs + event.releaseDurationMs <= event.durationMs) {
-                "Attack and release durations combined must be less than the event duration"
+                "Attack and release durations combined must be <= event duration"
             }
 
             for (i in 0 until samples) {
@@ -61,10 +84,8 @@ class TonePlayer {
                             if ((freq.hashCode() and 1) == 0) event.detuneHz else -event.detuneHz
                         } else 0.0
 
-                        // Base tone
                         sampleSum += event.waveform.sample(i, baseFreq)
 
-                        // Harmonics
                         for ((multiple, amp) in event.harmonics) {
                             sampleSum += amp * event.waveform.sample(i, baseFreq * multiple)
                         }
@@ -72,36 +93,36 @@ class TonePlayer {
                     sampleSum /= event.frequenciesHz.size
                 }
 
-                // Envelope
                 val amplitude = when {
                     i < attackSamples -> i.toDouble() / attackSamples
-                    i > samples - releaseSamples ->
-                        (samples - i).toDouble() / releaseSamples
+                    i > samples - releaseSamples -> (samples - i).toDouble() / releaseSamples
                     else -> 1.0
                 }
 
-                // Clamp to [-1, 1] before converting to Short
-                val sample = (sampleSum * amplitude).coerceIn(-1.0, 1.0)
-                buffer.add((sample * Short.MAX_VALUE).toInt().toShort())
+                val sampleValue = (sampleSum * amplitude).coerceIn(-1.0, 1.0)
+                val idx = startSample + i
+                if (idx < mixBuffer.size) {
+                    mixBuffer[idx] += sampleValue
+                }
             }
         }
 
-//        while (buffer.size < SAMPLE_RATE) {
-//            buffer.add(0)
-//        }
+        // Normalize to prevent clipping
+        val maxAmp = mixBuffer.maxOf { abs(it) }.coerceAtLeast(1e-6)
+        val pcm = ShortArray(totalSamples) { i ->
+            (mixBuffer[i] / maxAmp * Short.MAX_VALUE).toInt().toShort()
+        }
 
         val track = AudioTrack(
             AudioManager.STREAM_MUSIC,
             SAMPLE_RATE,
             AudioFormat.CHANNEL_OUT_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
-            buffer.size * 2,
+            pcm.size * 2,
             AudioTrack.MODE_STATIC
         )
 
         currentTrack = track
-
-        val pcm = buffer.toShortArray()
         track.write(pcm, 0, pcm.size)
         track.play()
     }

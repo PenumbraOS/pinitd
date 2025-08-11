@@ -53,7 +53,13 @@ impl Controller {
             init_zygote_with_fd();
         }
 
+        info!("Pausing before demonization");
+        std::thread::sleep(Duration::from_secs(2));
+
         daemonize(async move {
+            // TODO: fnctl locks will be implicitly dropped when the original forker, the parent (grandparent) dies
+            // There is not actually a lock held here
+            let _ = controller_lock.unlock();
             init_exploit(use_system_domain).await?;
 
             info!("Sending exploit force clear");
