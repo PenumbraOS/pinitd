@@ -272,6 +272,7 @@ async fn handle_command(
                 service_name, command
             );
 
+            let command = format!("exec {command}");
             let mut child = Command::new("sh").args(["-c", &command]).spawn()?;
 
             let pid = match child.id() {
