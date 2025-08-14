@@ -55,26 +55,10 @@ jobs:
           cd android
           chmod +x gradlew
 
-      - name: Build main APK
-        run: |
-          cd android
-          ./gradlew assembleRelease
-
-      - name: Rename APK files and copy binaries
-        run: |
-          # Create release artifacts directory
-          mkdir -p release-artifacts
-
-          # Copy main APK
-          cp android/app/build/outputs/apk/release/app-release.apk release-artifacts/pinitd.apk
-
-          # Copy pinitd-cli binary
-          cp target/aarch64-linux-android/release/pinitd-cli release-artifacts/pinitd-cli
-
-      - name: Generate version tag
-        id: version
+      - name: Generate version for build
         run: |
           TODAY=$(date +'%Y-%m-%d')
+          TODAY_CODE=$(date +'%Y%m%d')
 
           # Get all existing releases for today (fetch more to avoid pagination issues)
           EXISTING=$(gh release list --limit 100 --json tagName --jq '.[].tagName' | grep "^${TODAY}\." || echo "")
@@ -91,17 +75,39 @@ jobs:
           echo "Existing releases for ${TODAY}: $EXISTING"
           echo "Next build number: $BUILD_NUM"
 
-          VERSION="${TODAY}.${BUILD_NUM}"
-          echo "tag=$VERSION" >> $GITHUB_OUTPUT
-          echo "Generated version: $VERSION"
+          VERSION_NAME="${TODAY}.${BUILD_NUM}"
+          VERSION_CODE="${TODAY_CODE}${BUILD_NUM}"
+
+          echo "Generated version name: $VERSION_NAME"
+          echo "Generated version code: $VERSION_CODE"
+
+          # Set environment variables for subsequent steps
+          echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_ENV
+          echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_ENV
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build main APK
+        run: |
+          cd android
+          ./gradlew assembleRelease -PversionName="$VERSION_NAME" -PversionCode="$VERSION_CODE"
+
+      - name: Rename APK files and copy binaries
+        run: |
+          # Create release artifacts directory
+          mkdir -p release-artifacts
+
+          # Copy main APK
+          cp android/app/build/outputs/apk/release/app-release.apk release-artifacts/PenumbraOS-pinitd-${VERSION_NAME}.apk
+
+          # Copy pinitd-cli binary
+          cp target/aarch64-linux-android/release/pinitd-cli release-artifacts/pinitd-cli
 
       - name: Create Prerelease
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: Alpha ${{ steps.version.outputs.tag }}
+          tag_name: ${{ env.VERSION_NAME }}
+          name: Alpha ${{ env.VERSION_NAME }}
           prerelease: true
           generate_release_notes: true
           files: release-artifacts/*
