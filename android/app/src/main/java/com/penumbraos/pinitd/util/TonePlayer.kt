@@ -43,7 +43,7 @@ class TonePlayer {
 
     var currentTrack: AudioTrack? = null
 
-    fun playJingle(events: List<SoundEvent>) {
+    fun playJingle(events: List<SoundEvent>, volume: Float = 1.0f) {
         if (events.isEmpty()) return
 
         // Calculate total duration considering offsets
@@ -107,10 +107,11 @@ class TonePlayer {
             }
         }
 
-        // Normalize to prevent clipping
+        // Normalize to prevent clipping and apply volume
         val maxAmp = mixBuffer.maxOf { abs(it) }.coerceAtLeast(1e-6)
+        val volumeClamped = volume.coerceIn(0.0f, 1.0f)
         val pcm = ShortArray(totalSamples) { i ->
-            (mixBuffer[i] / maxAmp * Short.MAX_VALUE).toInt().toShort()
+            (mixBuffer[i] / maxAmp * Short.MAX_VALUE * volumeClamped).toInt().toShort()
         }
 
         val track = AudioTrack(

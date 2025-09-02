@@ -1,6 +1,6 @@
 package com.penumbraos.pinitd.util
 
-fun playBootChime(player: TonePlayer) {
+fun playBootChime(player: TonePlayer, volume: Float = 1.0f) {
     // Play Macintosh LC startup chime
     player.playJingle(
         listOf(
@@ -17,10 +17,11 @@ fun playBootChime(player: TonePlayer) {
                 detuneHz = 0.5
             )
         ),
+        volume
     )
 }
 
-fun playDeathChime(player: TonePlayer) {
+fun playDeathChime(player: TonePlayer, volume: Float = 1.0f) {
     // Play Macintosh LC death chime
     player.playJingle(
         listOf(
@@ -108,5 +109,6 @@ fun playDeathChime(player: TonePlayer) {
                 offsetMs = -300
             )
         ),
+        volume
     )
 }

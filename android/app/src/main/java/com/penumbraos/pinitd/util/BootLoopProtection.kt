@@ -3,6 +3,7 @@ package com.penumbraos.pinitd.util
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
+import android.media.AudioManager
 import android.util.Log
 import androidx.core.content.edit
 import com.penumbraos.pinitd.SHARED_TAG
@@ -18,6 +19,7 @@ private const val KEY_MANUAL_OVERRIDE = "manual_override"
 
 private const val MAX_FAILURES = 5
 private const val LAUNCH_DISABLED_TIMEOUT_S = 10 * 60
+private const val MAX_CHIME_VOLUME = 0.4f
 
 enum class BootProtectionStatus {
     REQUIRES_BOOT,
@@ -27,8 +29,15 @@ enum class BootProtectionStatus {
 
 class BootLoopProtection(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("pinitd_boot_protection", Context.MODE_PRIVATE)
-
+    private val audioManager: AudioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val player: TonePlayer = TonePlayer()
+
+    private fun calculateChimeVolume(): Float {
+        val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+        val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        val systemVolumeRatio = if (maxVolume > 0) currentVolume.toFloat() / maxVolume else 1.0f
+        return kotlin.math.min(systemVolumeRatio, MAX_CHIME_VOLUME)
+    }
 
     @SuppressLint("SdCardPath")
     fun shouldAttemptLaunch(): BootProtectionStatus {
@@ -106,11 +115,11 @@ class BootLoopProtection(context: Context) {
 
         Log.i(SHARED_TAG, "Recorded successful launch, reset failure count")
 
-        playBootChime(player)
+        playBootChime(player, calculateChimeVolume())
     }
 
     fun playDeathChime() {
-        playDeathChime(player)
+        playDeathChime(player, calculateChimeVolume())
     }
 
     fun enableManualOverride() {
