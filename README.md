@@ -88,28 +88,13 @@ SeInfo=platform:nfc
 
 ## Installation
 
-This is an active work in progress and may be difficult to set up. Please reach out to [@agg23](https://github.com/agg23) for questions or help.
-
-1. Run `build.sh`. This will install the `pinitd-cli` binary and the Android APK that allows for autostart and contains the actual `pinitd` binary.
-2. Due to https://github.com/PenumbraOS/pinitd/issues/4, starting apps may not work after setting up the `pinitd` environment. Start your primary app now to ensure it runs.
-3. Start `pinitd`. At the time of writing this is accomplished by running:
-
-```bash
-settings delete global hidden_api_blacklist_exemptions && am force-stop com.android.settings
-am start -n com.penumbraos.pinitd/.ManualLaunchActivity
-```
-
-but this will change in the future.
-
-4. Once `pinitd` is running, if you had any autostart services, they should also now be running. Otherwise, you can manually start your services using:
-
-```bash
-./data/local/tmp/bin/pinitd-cli start [SERVICE_NAME]
-```
+For general installation, see https://github.com/PenumbraOS/installer. If you want to develop locally, running `build.sh` from a Bash-compatible shell will set up the entire environment for Pin for you on the actual device.
 
 ## Troubleshooting
 
 Due to `pinitd` relying on [Zygote vulnerability CVE-2024-31317](https://github.com/agg23/cve-2024-31317/), which involves a race on Android 12+, the vulnerability may fail randomly. Generally a failure will cause Zygote to reset the system (but not reboot), which may or may not be what we desire. In general, on any failure I recommend a reboot of the sytem.
+
+The Pin will indicate (after a several minute delay on boot) whether or not boot suceeded. It will play either a happy success boot chime, or a sad failure boot chime. If the failure case occurs, your device should be rebooted.
 
 ### Rebooting
 
