@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    process::Stdio,
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -10,6 +11,7 @@ use crate::{
 };
 use pinitd_common::{ServiceRunState, UID, WORKER_CONTROLLER_POLL_INTERVAL, WorkerIdentity};
 use tokio::{
+    io::{AsyncBufReadExt, AsyncRead, BufReader},
     process::Command,
     select,
     sync::Mutex,
@@ -255,6 +257,32 @@ impl WorkerProcess {
     }
 }
 
+async fn forward_process_output<R>(
+    mut reader: BufReader<R>,
+    service_name: String,
+    is_error: bool,
+) -> tokio::io::Result<()>
+where
+    R: AsyncRead + Unpin,
+{
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let bytes_read = reader.read_line(&mut line).await?;
+        if bytes_read == 0 {
+            break;
+        }
+
+        if is_error {
+            error!("{service_name}: {}", line.trim_end());
+        } else {
+            warn!("{service_name}: {}", line.trim_end());
+        }
+    }
+
+    Ok(())
+}
+
 async fn handle_command(
     command: WorkerCommand,
     running_processes: &Arc<Mutex<HashMap<String, ProcessInfo>>>,
@@ -267,22 +295,27 @@ async fn handle_command(
             pinit_id,
             service_name,
         } => {
-            info!(
-                "Spawning process for service '{}': {}",
-                service_name, command
-            );
+            info!("Spawning process for service '{service_name}': {command}",);
 
             let command = format!("exec {command}");
-            let mut child = Command::new("sh").args(["-c", &command]).spawn()?;
+            let mut child = Command::new("sh")
+                .args(["-c", &command])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()?;
 
             let pid = match child.id() {
                 Some(pid) => pid,
                 None => {
                     if let Ok(Some(exit)) = child.try_wait() {
+                        let exit_code = exit.code().unwrap_or(-1);
+                        error!(
+                            "Child process for service '{service_name}' immediately terminated with exit code {exit_code}"
+                        );
                         let _ = connection
                             .write_response(WorkerMessage::Event(WorkerEvent::ProcessExited {
                                 service_name,
-                                exit_code: exit.code().unwrap_or(-1),
+                                exit_code,
                             }))
                             .await;
                     }
@@ -290,6 +323,27 @@ async fn handle_command(
                     return Ok(WorkerResponse::Success);
                 }
             };
+
+            let stdout = child.stdout.take().unwrap();
+            let stderr = child.stderr.take().unwrap();
+
+            let stdout_service = service_name.clone();
+            tokio::spawn(async move {
+                if let Err(err) =
+                    forward_process_output(BufReader::new(stdout), stdout_service, false).await
+                {
+                    error!("Failed to forward stdout: {err}");
+                }
+            });
+
+            let stderr_service = service_name.clone();
+            tokio::spawn(async move {
+                if let Err(err) =
+                    forward_process_output(BufReader::new(stderr), stderr_service, true).await
+                {
+                    error!("Failed to forward stderr: {err}");
+                }
+            });
 
             let process_info =
                 ProcessInfo::new(pid, service_name.clone(), pinit_id, command.clone());
