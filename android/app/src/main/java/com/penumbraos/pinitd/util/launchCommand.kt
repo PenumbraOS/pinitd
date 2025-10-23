@@ -18,7 +18,11 @@ import kotlin.time.Duration.Companion.milliseconds
 val EXEMPTIONS_SETTING_URI: Uri = Settings.Global.getUriFor("hidden_api_blacklist_exemptions")
 
 fun launchWithBootProtection(context: Context) {
-    Log.w(SHARED_TAG, "Boot completed. Checking boot protection")
+    Log.w(SHARED_TAG, "Boot completed. Delaying to wait for Android to stabilize")
+
+    Thread.sleep(10000)
+
+    Log.w(SHARED_TAG, "Delay completed. Checking boot protection")
 
     // TODO: Check if exemption is already set. If so, this boot may be broken, so we need to clear and reboot before starting
     // Make sure to count this as a boot failure
