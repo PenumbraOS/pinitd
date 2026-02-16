@@ -3,15 +3,20 @@ use std::{
     fs::File,
     io::Write,
     os::fd::{FromRawFd, RawFd},
+    time::Duration,
 };
 
 use crate::error::{Error, Result};
 
+const ZYGOTE_PID_WRITE_DELAY_MS: u64 = 1000;
+
 pub fn init_zygote_with_fd() {
     #[cfg(target_os = "android")]
     {
-        // info!("Delaying so Zygote can settle before pid write");
-        // sleep(Duration::from_millis(500)).await;
+        // Make sure the system has settled before removing the Zygote deadlock
+        info!("Delaying {}ms before PID write", ZYGOTE_PID_WRITE_DELAY_MS);
+        std::thread::sleep(Duration::from_millis(ZYGOTE_PID_WRITE_DELAY_MS));
+
         if let Err(error) = extract_and_write_fd() {
             error!("fd error: {error}");
         }
@@ -26,8 +31,8 @@ fn extract_and_write_fd() -> Result<()> {
 
     let mut pipe: File = unsafe { File::from_raw_fd(fd) };
     info!("Writing pid {helper_pid} to fd {fd}");
-    let _ = pipe.write_all(&helper_pid.to_be_bytes());
-    let _ = pipe.flush();
+    pipe.write_all(&helper_pid.to_be_bytes())?;
+    pipe.flush()?;
 
     Ok(())
 }

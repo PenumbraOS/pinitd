@@ -15,7 +15,7 @@ const val SHARED_TAG = "pinitd-trampoline"
 
 // adb shell am start -n com.penumbraos.pinitd/.ManualLaunchActivity
 class ManualLaunchActivity : Activity() {
-    val scope = CoroutineScope(Dispatchers.Main)
+    val scope = CoroutineScope(Dispatchers.IO)
     val handler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {

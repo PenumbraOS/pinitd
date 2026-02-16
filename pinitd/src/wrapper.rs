@@ -42,7 +42,7 @@ impl Wrapper {
                     let stdout = stdout.trim();
                     if stdout != "aarch64" {
                         return Err(Error::ZygoteError(format!(
-                            "Process is not 64 bit ({stdout}). Dying"
+                            "Process is {stdout}, not aarch64 — likely Zygote32 spawn (issue #4). Dying"
                         )));
                     }
                 }
