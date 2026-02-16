@@ -1,20 +1,24 @@
 package com.penumbraos.pinitd.util
 
 fun playBootChime(player: TonePlayer, volume: Float = 1.0f) {
-    // Play Macintosh LC startup chime
+    // Gentle rising two-tone chime (inspired by iOS charging sound)
+    // Two pure sine tones ascending a major sixth — soft and brief
     player.playJingle(
         listOf(
             TonePlayer.SoundEvent(
-                doubleArrayOf(
-                    349.23, 523.25
-                ),
-                durationMs = 1200,
-                attackDurationMs = 50,
-                releaseDurationMs = 1000,
-                waveform = TonePlayer.Waveform.SQUARE,
-                // Slight overtones
-                harmonics = listOf(2 to 0.3, 3 to 0.15),
-                detuneHz = 0.5
+                doubleArrayOf(587.33),  // D5
+                durationMs = 180,
+                attackDurationMs = 15,
+                releaseDurationMs = 100,
+                waveform = TonePlayer.Waveform.SINE
+            ),
+            TonePlayer.SoundEvent(
+                doubleArrayOf(880.00),  // A5
+                durationMs = 300,
+                attackDurationMs = 15,
+                releaseDurationMs = 250,
+                waveform = TonePlayer.Waveform.SINE,
+                offsetMs = -30
             )
         ),
         volume
@@ -22,91 +26,23 @@ fun playBootChime(player: TonePlayer, volume: Float = 1.0f) {
 }
 
 fun playDeathChime(player: TonePlayer, volume: Float = 1.0f) {
-    // Play Macintosh LC death chime
+    // Gentle descending two-tone chime — soft and unmistakably different from boot
     player.playJingle(
         listOf(
             TonePlayer.SoundEvent(
-                doubleArrayOf(
-                    347.73
-                ),
-                durationMs = 700,
-                attackDurationMs = 50,
-                releaseDurationMs = 650,
-                waveform = TonePlayer.Waveform.SQUARE,
-                harmonics = listOf(2 to 0.3, 3 to 0.15), // gentle overtones
-                detuneHz = 0.5
+                doubleArrayOf(659.25),  // E5
+                durationMs = 250,
+                attackDurationMs = 15,
+                releaseDurationMs = 150,
+                waveform = TonePlayer.Waveform.SINE
             ),
             TonePlayer.SoundEvent(
-                doubleArrayOf(
-                    438.03
-                ),
-                durationMs = 700,
-                attackDurationMs = 50,
-                releaseDurationMs = 650,
-                waveform = TonePlayer.Waveform.SQUARE,
-                harmonics = listOf(2 to 0.3, 3 to 0.15), // gentle overtones
-                detuneHz = 0.5,
-                offsetMs = -400
-            ),
-            TonePlayer.SoundEvent(
-                doubleArrayOf(
-                    521.11
-                ),
-                durationMs = 700,
-                attackDurationMs = 50,
-                releaseDurationMs = 650,
-                waveform = TonePlayer.Waveform.SQUARE,
-                harmonics = listOf(2 to 0.3, 3 to 0.15), // gentle overtones
-                detuneHz = 0.5,
-                offsetMs = -400
-            ),
-            TonePlayer.SoundEvent(
-                doubleArrayOf(
-                    695.36
-                ),
-                durationMs = 1600,
-                attackDurationMs = 50,
-                releaseDurationMs = 700,
-                waveform = TonePlayer.Waveform.SQUARE,
-                harmonics = listOf(2 to 0.3, 3 to 0.15), // gentle overtones
-                detuneHz = 0.5,
-                offsetMs = -400
-            ),
-            TonePlayer.SoundEvent(
-                doubleArrayOf(
-                    521.14
-                ),
-                durationMs = 600,
-                attackDurationMs = 50,
-                releaseDurationMs = 400,
-                waveform = TonePlayer.Waveform.SQUARE,
-                harmonics = listOf(2 to 0.3, 3 to 0.15), // gentle overtones
-                detuneHz = 0.5,
-                offsetMs = -300
-            ),
-            TonePlayer.SoundEvent(
-                doubleArrayOf(
-                    544.37
-                ),
-                durationMs = 800,
-                attackDurationMs = 50,
-                releaseDurationMs = 400,
-                waveform = TonePlayer.Waveform.SQUARE,
-                harmonics = listOf(2 to 0.3, 3 to 0.15), // gentle overtones
-                detuneHz = 0.5,
-                offsetMs = -300
-            ),
-            TonePlayer.SoundEvent(
-                doubleArrayOf(
-                    438.03
-                ),
-                durationMs = 1200,
-                attackDurationMs = 50,
-                releaseDurationMs = 800,
-                waveform = TonePlayer.Waveform.SQUARE,
-                harmonics = listOf(2 to 0.3, 3 to 0.15), // gentle overtones
-                detuneHz = 0.5,
-                offsetMs = -300
+                doubleArrayOf(440.00),  // A4
+                durationMs = 400,
+                attackDurationMs = 15,
+                releaseDurationMs = 350,
+                waveform = TonePlayer.Waveform.SINE,
+                offsetMs = -30
             )
         ),
         volume
