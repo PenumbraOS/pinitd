@@ -19,7 +19,7 @@ private const val KEY_MANUAL_OVERRIDE = "manual_override"
 
 private const val MAX_FAILURES = 5
 private const val LAUNCH_DISABLED_TIMEOUT_S = 10 * 60
-private const val MAX_CHIME_VOLUME = 0.4f
+private const val MAX_CHIME_VOLUME = 0.15f
 
 enum class BootProtectionStatus {
     REQUIRES_BOOT,
