@@ -1,11 +1,15 @@
 package com.penumbraos.pinitd.util
 
+import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
+import android.util.Log
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.sin
+import kotlin.math.sqrt
+import kotlin.math.tanh
 
 private const val SAMPLE_RATE = 44100
 
@@ -108,20 +112,50 @@ class TonePlayer {
         }
 
         // Normalize to prevent clipping and apply volume
-        val maxAmp = mixBuffer.maxOf { abs(it) }.coerceAtLeast(1e-6)
-        val volumeClamped = volume.coerceIn(0.0f, 1.0f)
-        val pcm = ShortArray(totalSamples) { i ->
-            (mixBuffer[i] / maxAmp * Short.MAX_VALUE * volumeClamped).toInt().toShort()
+//        val maxAmp = mixBuffer.maxOf { abs(it) }.coerceAtLeast(1e-6)
+//        val pcm = ShortArray(totalSamples) { i ->
+//            (mixBuffer[i] / maxAmp * Short.MAX_VALUE).toInt().toShort()
+//        }
+        // Measure peak and RMS after mixing
+        val peak = mixBuffer.maxOf { abs(it) }.coerceAtLeast(1e-12)
+        val rms  = sqrt(mixBuffer.sumOf { it * it } / mixBuffer.size)
+
+        // Compute master gain: only scale down if we exceeded 1.0
+        // Keep some headroom to avoid intersample clipping (e.g., 0.8)
+        val headroom = 0.8
+        val normalizedVolume = volume.coerceIn(0f, 1f).toDouble()
+        val downscale = if (peak > 1.0) (headroom / peak) else headroom
+        val masterGain = normalizedVolume * downscale
+
+        Log.e("TonePlayer",
+            "post-mix peak=%.3f, rms=%.3f, masterGain=%.3f (vol=%.2f)"
+                .format(peak, rms, masterGain, volume))
+
+        fun softClip(x: Double): Double {
+            // gentle: y = tanh(2x)/tanh(2) keeps |y|<1 with soft knee
+            val y = tanh(2.0 * x)
+            val n = tanh(2.0)
+            return y / n
         }
 
-        val track = AudioTrack(
-            AudioManager.STREAM_MUSIC,
-            SAMPLE_RATE,
-            AudioFormat.CHANNEL_OUT_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-            pcm.size * 2,
-            AudioTrack.MODE_STATIC
-        )
+        val pcm = ShortArray(mixBuffer.size) { i ->
+            val s = softClip(mixBuffer[i] * masterGain)
+                .coerceIn(-1.0, 1.0)
+            (s * Short.MAX_VALUE).toInt().toShort()
+        }
+
+        val attrs = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION) // try USAGE_NOTIFICATION as well
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build()
+
+        val format = AudioFormat.Builder()
+            .setSampleRate(SAMPLE_RATE)
+            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+            .build()
+
+        val track = AudioTrack(attrs, format, pcm.size * 2, AudioTrack.MODE_STATIC, AudioManager.AUDIO_SESSION_ID_GENERATE)
 
         currentTrack = track
         track.write(pcm, 0, pcm.size)
