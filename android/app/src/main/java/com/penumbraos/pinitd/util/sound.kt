@@ -1,8 +1,7 @@
 package com.penumbraos.pinitd.util
 
 fun playBootChime(player: TonePlayer, volume: Float = 1.0f) {
-    // Gentle rising two-tone chime (inspired by iOS charging sound)
-    // Two pure sine tones ascending a major sixth — soft and brief
+    // Gentle rising major fifth chime (inspired by iOS charging sound)
     player.playJingle(
         listOf(
             TonePlayer.SoundEvent(
@@ -26,11 +25,11 @@ fun playBootChime(player: TonePlayer, volume: Float = 1.0f) {
 }
 
 fun playDeathChime(player: TonePlayer, volume: Float = 1.0f) {
-    // Gentle descending two-tone chime — soft and unmistakably different from boot
+    // Gentle descending minor third chime
     player.playJingle(
         listOf(
             TonePlayer.SoundEvent(
-                doubleArrayOf(659.25),  // E5
+                doubleArrayOf(523.25),  // C5
                 durationMs = 250,
                 attackDurationMs = 15,
                 releaseDurationMs = 150,
