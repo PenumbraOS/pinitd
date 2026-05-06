@@ -1,3 +1,6 @@
+> [!CAUTION]
+> This exploit path is deprecated and is no longer in use. See [humane-system-hook](https://github.com/PenumbraOS/humane-system-hook) for current PenumbraOS work.
+
 # Pinitd init system for Ai Pin
 
 A custom, rootless init system for the Ai Pin to bypass access limitations.
